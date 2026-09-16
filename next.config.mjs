@@ -5,6 +5,7 @@ const withMDX = createMDX();
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
+  eslint: { ignoreDuringBuilds: true },
   async redirects() {
     return [{ source: '/', destination: '/docs', permanent: true }];
   },

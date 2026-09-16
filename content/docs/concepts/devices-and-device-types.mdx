@@ -1,0 +1,58 @@
+---
+title: Devices & Device Types
+description: Legacy binary devices vs. catalog-backed devices, and what a device type actually adds.
+---
+
+A **device** (`Device` in the schema) is a physical thing with MQTT
+credentials, a relay/online state, and an owning account/project. Every
+device optionally points at a **device type** (`deviceTypeId`), and that one
+field changes what commands it understands.
+
+## Devices without a device type
+
+If `deviceTypeId` is `null`, the device is a "legacy binary device" - this
+keeps existing hardware and firmware working unchanged. It only ever
+understands five fixed commands:
+
+```
+ON   OFF   TOGGLE   STATUS   GET_SCHEDULES
+```
+
+`ON`/`OFF`/`TOGGLE` are `ACTION` kind (they change state); `STATUS` and
+`GET_SCHEDULES` are `QUERY` kind (they only read). Anything else sent to a
+legacy device comes back as `UNKNOWN_COMMAND`.
+
+## Devices with a device type
+
+Assign a `DeviceType` and the device instead validates commands against that
+type's **command catalog** - a set of `CommandDefinition` rows, each with:
+
+| Field | Meaning |
+|---|---|
+| `name` | Command name, e.g. `SET_ALTITUDE` (`[A-Z0-9_]+`) |
+| `kind` | `ACTION` (changes state) or `QUERY` (reads only) |
+| `paramsSchema` | A JSON Schema the command's `params` must satisfy, or `null` for no params |
+| `requiresApproval` | If true, a non-owner caller's command is held as a pending approval instead of running immediately |
+| `shape` | Presentational only (`BUTTON`/`TOGGLE`/`NUMBER`/`SELECT`) - never consulted by validation |
+
+This is how a device stops being a dumb relay and becomes something with a
+real, self-describing API surface: fetch its catalog with
+[`GET /api/v1/devices/{deviceId}/commands`](/docs/reference) (API-key
+callable) before sending anything, rather than hardcoding command names in
+your client.
+
+<Callout type="warn" title="requiresApproval only applies to non-owner callers">
+  An Owner/Admin dashboard session never needs approval for its own commands
+  - approval exists to let a business require human sign-off on commands
+  sent by API keys or MEMBER/VIEWER team members. See
+  [Commands & Validation](/docs/concepts/commands-and-validation).
+</Callout>
+
+## Boards & application categories
+
+Two read-only, API-key-callable catalog endpoints exist independently of any
+specific device - useful when building a "what hardware do you support"
+picker:
+
+- [`GET /api/v1/catalog/boards`](/docs/reference) - supported hardware boards.
+- [`GET /api/v1/catalog/apps`](/docs/reference) - supported application/industry categories.

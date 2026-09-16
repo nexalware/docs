@@ -1,0 +1,268 @@
+---
+title: MicroPython Reference
+description: A working MicroPython starting point - connect, subscribe, dispatch on cmd, publish status/telemetry.
+---
+
+This is the device side of the loop the rest of these docs describe from the
+application side. Your firmware speaks plain MQTT to the same broker your
+dashboard and API keys talk to through the bridge - there's no separate
+"device API." Get credentials once from the Credentials tab (or
+`POST /api/v1/devices/{deviceId}/credentials`, dashboard-only), paste them
+into `config.py`, and the code below is a complete, runnable starting point.
+
+<Callout type="info" title="Which reference do I need?">
+  This page is for boards that run **MicroPython firmware** - ESP32,
+  ESP8266, and Raspberry Pi Pico/Pico W (RP2040/RP2350) are the common
+  ones. If you'd rather program the same board from the Arduino IDE
+  instead, see the [Arduino IDE / C Language Reference](/docs/arduino-reference).
+  If your board is a full Linux computer - a Raspberry Pi 3/4/5 or Zero
+  running Raspberry Pi OS, not the Pico - it doesn't run MicroPython at all;
+  use regular desktop Python with the `paho-mqtt` package against the same
+  host, port, topics, and credentials shown below. And regardless of board:
+  the protocol underneath is plain MQTT, so anything with a TCP stack and an
+  MQTT client library can connect the same way - MicroPython and Arduino
+  are just the two most common starting points, not a requirement.
+</Callout>
+
+<Callout type="warn" title="Plain MQTT, no TLS yet">
+  The broker listens on port 1883 with no TLS listener today - credentials go
+  over the wire in plaintext. Treat this the way you'd treat any
+  unencrypted-transport IoT deployment: fine on a trusted network, not
+  something to expose directly to the open internet. A TLS listener is on the
+  roadmap; nothing here depends on which port you're using, so migrating
+  later is a one-line change.
+</Callout>
+
+## What you need
+
+- A device registered and credentialed - see
+  [Register Your First Device](/docs/guides/register-your-first-device) or
+  the Credentials tab.
+- MicroPython's `umqtt.robust` (reconnects on its own; `umqtt.simple` also
+  works but leaves reconnection to you) and `ujson` - see **Install the MQTT
+  library** below.
+- A `config.py` with your device's values - the Credentials tab's
+  **MicroPython (Python)** toggle generates this file directly from your
+  device's real credentials, ready to paste:
+
+```python title="config.py"
+# Nexalware Device Configuration
+# Device: dev_a1b2c3
+# WARNING: Keep this private. Do not commit to version control.
+
+NXW_DEVICE_ID = "dev_a1b2c3"
+NXW_MQTT_HOST = "mqtt.nexalware.com"
+NXW_MQTT_PORT = 1883
+NXW_MQTT_USER = "d_a1b2c3d4"
+NXW_MQTT_PASS = "••••••••••••••••"
+NXW_TOPIC_CMD = "nexalware/devices/dev_a1b2c3/command"
+NXW_TOPIC_STATUS = "nexalware/devices/dev_a1b2c3/status"
+```
+
+## Install the MQTT library
+
+<Callout type="warn" title="Not a pip package">
+  `umqtt` only exists inside MicroPython (as part of `micropython-lib`) - it
+  is not on PyPI, so `pip install umqtt` on your desktop will always fail
+  with "no matching distribution." It has to be installed *onto the board's
+  own filesystem*, not your machine's site-packages.
+</Callout>
+
+1. **Check whether it's already there.** Many boards (most ESP32 builds in
+   particular) ship `umqtt` pre-installed. Connect to the board's REPL and
+   try:
+   ```python
+   import umqtt.robust
+   ```
+   No error means you're done - skip to Connect below.
+
+2. **If that fails**, install it directly onto the board over its REPL
+   connection, using `mip` (MicroPython's package manager, built into
+   recent firmware). With [`mpremote`](https://docs.micropython.org/en/latest/reference/mpremote.html)
+   from your desktop:
+   ```bash
+   mpremote connect /dev/ttyUSB0 mip install umqtt.robust
+   ```
+   Or from a board already on Wi-Fi, at its own REPL:
+   ```python
+   import mip
+   mip.install("umqtt.robust")
+   ```
+   Either way this writes `umqtt/robust.py` (plus `umqtt/simple.py`, a
+   dependency) into `/lib` on the board's filesystem. `ujson` ships with
+   essentially every MicroPython build and needs no separate install.
+
+3. **No network yet / older firmware without `mip`**: use Thonny's
+   Tools → Manage Packages (it wraps the same `mip` install for boards
+   connected over serial), or download
+   [`umqtt/robust.py`](https://github.com/micropython/micropython-lib/blob/master/micropython/umqtt.robust/umqtt/robust.py)
+   and [`umqtt/simple.py`](https://github.com/micropython/micropython-lib/blob/master/micropython/umqtt.simple/umqtt/simple.py)
+   from `micropython-lib` and copy them to `/lib/umqtt/` on the board
+   yourself (Thonny's file browser, `mpremote cp`, or `ampy put`).
+
+## Connect
+
+```python title="main.py"
+import time
+import ujson
+from umqtt.robust import MQTTClient
+import config
+
+client = MQTTClient(
+    client_id=config.NXW_DEVICE_ID,
+    server=config.NXW_MQTT_HOST,
+    port=config.NXW_MQTT_PORT,
+    user=config.NXW_MQTT_USER,
+    password=config.NXW_MQTT_PASS,
+    keepalive=60,
+)
+
+client.set_callback(on_message)  # defined below, in Dispatch on cmd
+client.connect()
+client.subscribe(config.NXW_TOPIC_CMD, qos=1)
+print("connected, listening on", config.NXW_TOPIC_CMD)
+```
+
+`MQTTClient` from `umqtt.robust` retries the connection and republishes
+queued messages on its own when the link drops - `umqtt.simple` gives you
+the same API without that, if you'd rather handle reconnection yourself.
+The username/password pair is exactly what the Credentials tab handed you;
+nothing else identifies this device to the broker.
+
+## Subscribe to commands
+
+One topic carries everything the platform sends this device -
+[commands](/docs/concepts/commands-and-validation) and schedule-sync
+messages both arrive here, distinguished by `cmd`:
+
+```python
+client.subscribe(config.NXW_TOPIC_CMD, qos=1)
+```
+
+The broker's ACL restricts this device's credentials to its own three
+topics - subscribing to anything else fails at the broker, not silently.
+
+## Dispatch on cmd
+
+Every inbound message is a JSON object with a `cmd` field. Route on it the
+same way you'd route an HTTP request on a path:
+
+```python
+def on_message(topic, msg):
+    try:
+        payload = ujson.loads(msg)
+    except ValueError:
+        return  # malformed message, ignore rather than crash
+
+    cmd = payload.get("cmd")
+
+    if cmd == "ON":
+        relay.on()
+        publish_status()
+    elif cmd == "OFF":
+        relay.off()
+        publish_status()
+    elif cmd == "STATUS":
+        publish_status()
+    elif cmd == "SET_SCHEDULE":
+        save_schedule(payload)  # slot, onTs, offTs, label, enabled
+    elif cmd == "CANCEL_SCHEDULE":
+        clear_schedule(payload["slot"])
+    else:
+        # Unrecognized cmd - a device type with a richer catalog than this
+        # firmware currently implements. Ignore, don't crash.
+        pass
+```
+
+```json title="Example ON command"
+{ "cmd": "ON" }
+```
+
+```json title="Example command with params"
+{ "cmd": "SET_ALTITUDE", "params": { "meters": 12 } }
+```
+
+`params` is only present for commands that take arguments - a device type's
+catalog defines which commands exist and what `params` each expects, but
+your firmware only needs to `if`/`elif` on the `cmd` strings it actually
+implements. Anything else, ignore.
+
+## Publish status and telemetry
+
+After any state change - or on a timer, for periodic reporting - publish a
+status message. Every field is optional; send only what changed:
+
+```python
+def publish_status():
+    payload = {
+        "device_id": config.NXW_DEVICE_ID,
+        "relay": "ON" if relay.value() else "OFF",
+        "uptime": time.ticks_ms() // 1000,
+        "ts": time.time(),
+    }
+    client.publish(config.NXW_TOPIC_STATUS, ujson.dumps(payload))
+
+
+def publish_telemetry(metric, value, unit=None):
+    payload = {
+        "device_id": config.NXW_DEVICE_ID,
+        "telemetry": [{"metric": metric, "value": value, "unit": unit}],
+    }
+    client.publish(config.NXW_TOPIC_STATUS, ujson.dumps(payload))
+```
+
+```json title="Example status publish"
+{ "device_id": "dev_a1b2c3", "relay": "ON", "uptime": 4213, "ts": 1732000000 }
+```
+
+```json title="Example telemetry publish"
+{
+  "device_id": "dev_a1b2c3",
+  "telemetry": [{ "metric": "temperature", "value": 21.4, "unit": "celsius" }]
+}
+```
+
+Anyone subscribed to the live feed - the dashboard, or an application via
+[WebSocket](/docs/reference/websocket) - sees these the moment the broker
+relays them, no polling involved.
+
+## Handle schedule sync
+
+[Schedules](/docs/concepts/schedules) configured from the dashboard sync to
+the device over the same command topic as regular commands, using two
+reserved `cmd` values:
+
+```json title="SET_SCHEDULE"
+{ "cmd": "SET_SCHEDULE", "slot": 0, "onTs": 1732003600, "offTs": 1732032400, "label": "Morning cycle", "enabled": true }
+```
+
+```json title="CANCEL_SCHEDULE"
+{ "cmd": "CANCEL_SCHEDULE", "slot": 0 }
+```
+
+A minimal firmware only needs to persist these (to a file, or NVRAM) and
+check them against the current time on a loop - or, if the device stays
+online, simply wait for the platform to send `ON`/`OFF` directly when a
+slot's `onTs`/`offTs` is reached. Either approach is valid; the platform
+sends both the sync message and the eventual command.
+
+## The full loop
+
+```python title="main.py"
+while True:
+    client.check_msg()  # non-blocking; calls on_message for anything queued
+    time.sleep(0.25)
+```
+
+`umqtt.robust`'s `check_msg()` returns immediately if nothing arrived, so a
+short sleep is enough to stay responsive without busy-looping. For a device
+that also polls sensors, interleave that work in the same loop.
+
+## Where to go from here
+
+- [Connect a MicroPython Device](/docs/guides/connect-a-micropython-device) -
+  the full walkthrough, dashboard side and firmware side together.
+- [Arduino IDE / C Language Reference](/docs/arduino-reference) - the same
+  loop in C++, for boards you'd rather program from the Arduino IDE.
+- [Commands & Validation](/docs/concepts/commands-and-validation) - how a
+  device type's catalog defines the commands you `elif` on above.

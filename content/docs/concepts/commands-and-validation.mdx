@@ -1,0 +1,74 @@
+---
+title: Commands & Validation
+description: What actually happens, in order, when you send a command.
+---
+
+Every command goes through the same two independent checks before it
+reaches a device. It's worth knowing both, because they fail with
+different error shapes.
+
+## Step 1 - is this a real command, well-formed?
+
+This check looks at the command *itself*, independent of who's asking:
+
+1. If the device has no `deviceTypeId`, the command must be one of the five
+   [legacy commands](/docs/concepts/devices-and-device-types). Anything else
+   is `UNKNOWN_COMMAND`.
+2. If the device has a `deviceTypeId`, the command must exist in that type's
+   catalog (`CommandDefinition`). Otherwise, `UNKNOWN_COMMAND`.
+3. If the matched `CommandDefinition` has a `paramsSchema`, your `params`
+   object is validated against it with [Ajv](https://ajv.js.org) (`allErrors:
+   true`). Any failure is `INVALID_PARAMS`, with a `details` array of
+   per-field messages.
+
+Both failure modes come back as **HTTP 400**, shaped as
+`{ error: <code>, message: <text>, details?: [...] }` - see
+[Errors](/docs/concepts/errors).
+
+## Step 2 - is *this caller* allowed to send it, right now?
+
+This check looks at the caller, independently of the command's own
+validity:
+
+- An **Owner/Admin dashboard session** always passes - they administer the
+  account, no grant lookup needed.
+- A **VIEWER** team member is rejected outright for any `ACTION`-kind
+  command (`"Viewers can only read device status, not send commands."`) -
+  they can still run `QUERY`-kind commands if granted.
+- Everyone else - **API keys** and **MEMBER** team members - needs an
+  explicit, currently-active [DeviceGrant](/docs/concepts/authentication-and-access)
+  covering this device (or its project) and this command name (or a `*`
+  wildcard).
+
+A grant that exists can still fail the check for several independent
+reasons, each with its own message: it doesn't cover this command, it's a
+`READ`-scope grant being used for an `ACTION` command, it's outside its
+`activeDays`/`activeFromMinute`–`activeToMinute` window, it's expired, or
+its `rateLimitPerMinute` has been hit for the current 60-second window
+(counted via `DeviceEvent` rows tagged with the grant's id). All of these
+come back as **HTTP 403**.
+
+## What happens once both checks pass
+
+- If the matched `CommandDefinition.requiresApproval` is `true` **and** the
+  caller isn't an Owner/Admin session, the command is **not** sent. Instead
+  a pending `Approval` is created and the response is `202` with
+  `{ ok: true, approvalRequired: true, approvalId }`. An Owner/Admin later
+  approves or denies it from the dashboard
+  (`POST /api/v1/devices/{deviceId}/approvals/{approvalId}/approve`).
+- Otherwise the command is published over MQTT immediately, and the
+  response is `200` with `{ ok: true }`.
+
+## Sending a command
+
+```bash
+curl -X POST "https://api.nexalware.com/api/v1/devices/{deviceId}/command" \
+  -H "X-Api-Key: $NEXALWARE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"cmd": "SET_ALTITUDE", "params": {"meters": 120}}'
+```
+
+`ON` and `OFF` also have dedicated shorthand endpoints -
+`POST /api/v1/devices/{deviceId}/command/on` and `.../command/off` - for
+when you don't want to build a JSON body for the two most common commands.
+Both go through the exact same two-step validation above.

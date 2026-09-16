@@ -1,0 +1,37 @@
+---
+title: Rules
+description: Condition-based automation - "if this metric crosses a threshold, run this command."
+---
+
+A `Rule` is per-device, condition-based automation, managed entirely from
+the dashboard (`GET`/`POST /api/v1/devices/{deviceId}/rules`,
+`PATCH`/`DELETE .../rules/{ruleId}`, all session-only). There's no API-key
+path for creating rules; the engine that evaluates them runs server-side
+against incoming telemetry.
+
+| Field | Meaning |
+|---|---|
+| `name` | Human-readable label |
+| `enabled` | Whether the rule is currently active |
+| `priority` | Lower number = higher priority; when multiple enabled rules target the same command, the lowest `priority` wins (tiebreak: `createdAt`, then `ruleId`) |
+| `conditions` | `[{ metric, comparator, value }, ...]` - **all** must match (AND), capped at 10 per rule |
+| `action` | `{ commandId, params }` - what fires when conditions match |
+| `lastMatched` | Whether this rule matched the most recent evaluation |
+
+To build a rule's UI without hardcoding metric/command names, fetch
+`GET /api/v1/devices/{deviceId}/rules/context` first - it returns the
+metrics this device has reported and the commands its catalog supports, so
+the condition/action pickers stay accurate as the device's own catalog
+changes.
+
+<Callout title="Rules act with the account's own trust, not the caller's">
+  Because rules are configured and evaluated server-side, a matched rule's
+  action runs without going through the per-caller DeviceGrant check
+  described in [Authentication & Access](/docs/concepts/authentication-and-access)
+  - that check exists for external callers (API keys, team members), not for
+  automation the account owner already configured.
+</Callout>
+
+Rules and [Schedules](/docs/concepts/schedules) solve different problems:
+rules react to *state* (telemetry crossing a threshold), schedules react to
+*time* (a clock reaching a slot's on/off timestamp).

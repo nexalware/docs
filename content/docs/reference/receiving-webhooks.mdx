@@ -1,0 +1,205 @@
+---
+title: Receiving Webhooks
+description: How to set up an endpoint that receives, verifies, and handles Nexalware webhook deliveries.
+---
+
+The **Webhooks** endpoints elsewhere in this reference (register, list,
+rotate secret, delete, read delivery log) manage the webhook's own
+configuration - this page is the other half: what your server actually
+needs to do to receive one correctly, since that's plain outbound HTTP, not
+something an OpenAPI spec describes.
+
+A webhook is registered against one of your API keys and receives the same
+events that key's DeviceGrants already let it see - every relay change,
+telemetry reading, online/offline transition, and schedule firing, for
+every device that key can reach. There's no separate device list or
+event-type filter to configure - whatever the key can see, the webhook
+receives.
+
+<Callout type="warn" title="This is a public endpoint - verify every request">
+  Your webhook URL is not secret the way your signing secret is - URLs leak
+  through logs, browser history, and proxies far more easily than a value
+  that's never transmitted after creation. Anyone who finds your URL can
+  POST a fabricated payload to it. The only thing separating a real
+  Nexalware delivery from a forged one is the signature below - skipping
+  verification means your endpoint accepts anything, from anyone.
+</Callout>
+
+## Set up your endpoint first
+
+Before registering anything on the dashboard, you need a URL that's
+reachable from the internet and **not** behind your app's normal
+session/CSRF middleware. Most frameworks apply CSRF protection to every
+route by default, on the assumption that POSTs come from your own
+logged-in frontend - a Nexalware delivery has no session cookie and no
+CSRF token, so a route left behind that middleware rejects it with `403`
+before your handler code ever runs, and nothing in that response tells you
+why. Testing locally, a tunnel (`ngrok http 3000` or similar) gets you a
+public URL to develop against before you're ready to deploy.
+
+## Register the webhook
+
+**From the dashboard:** Settings → Webhooks → Add Webhook - pick the API
+key whose device access you want events from (shown by name, in a
+dropdown) and paste your URL. The dashboard looks up that key's `keyId`
+for you; you never see or type it directly.
+
+**Calling the API directly** instead, you need that `keyId` yourself first
+- it's not the API key's secret, it's a separate, non-secret label for
+which key you mean. Get it from the same key you'd otherwise pick in the
+dropdown:
+
+```bash title="1. Find the keyId of the API key you want to use"
+curl -X GET "https://api.nexalware.com/api/v1/keys" \
+  -H "Authorization: Bearer $SESSION_TOKEN"
+```
+
+```json title="Response - keyId is right there, alongside the key's name"
+[
+  { "keyId": "key_9f8e7d6c", "name": "Production Server", "enabled": true, ... }
+]
+```
+
+Don't have a key yet, or don't remember which one has the device access
+you want? `POST /api/v1/keys` creates a new one (see
+[Send a Command with an API Key](/docs/guides/send-a-command-with-an-api-key)
+for the full flow, including granting it device access) - a brand new key
+still needs a DeviceGrant before a webhook on it will deliver anything.
+
+```bash title="2. Register the webhook using that keyId"
+curl -X POST "https://api.nexalware.com/api/v1/webhooks" \
+  -H "Authorization: Bearer $SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"keyId": "key_9f8e7d6c", "url": "https://your-server.com/webhooks/nexalware"}'
+```
+
+Either way, the signing secret is shown **once**, at creation - save it
+into your server's environment immediately:
+
+```bash
+NEXALWARE_WEBHOOK_SECRET=whsec_9f2a1b3c...
+```
+
+Lost it? There's no way to view it again - rotate it from the same page
+instead (`POST /api/v1/webhooks/{webhookId}/rotate-secret`), which issues a
+new one and immediately invalidates the old one.
+
+## The envelope
+
+Every delivery is a POST with this JSON body, plus three headers:
+
+```
+POST <your url>
+Content-Type: application/json
+X-Nexalware-Event: relay_changed
+X-Nexalware-Delivery: whd_a1b2c3d4
+X-Nexalware-Signature: sha256=5f2a...
+```
+
+```json
+{
+  "id": "whd_a1b2c3d4",
+  "type": "relay_changed",
+  "createdAt": "2026-09-16T14:02:11.000Z",
+  "data": {
+    "type": "relay_changed",
+    "deviceId": "dev_a1b2c3",
+    "accountId": "acc_x1y2z3",
+    "relay": "ON",
+    "triggeredBy": "device",
+    "timestamp": 1732000000000
+  }
+}
+```
+
+`type` (top-level, and mirrored inside `data.type`) is one of the same
+event types the [WebSocket feed](/docs/reference/websocket) pushes -
+`relay_changed`, `telemetry`, `device_online`, `device_offline`,
+`schedule_fired`. `data` is exactly that event's payload, unchanged -
+if you've already built something against the WebSocket feed, the shape
+inside `data` is already familiar.
+
+## Verify the signature
+
+`X-Nexalware-Signature` is an HMAC-SHA256 of the **raw** request body,
+using your webhook's secret as the key. Recompute it yourself and compare
+before trusting anything in the body - this is what proves a request
+actually came from Nexalware and wasn't tampered with in transit, since
+changing even one byte of the body produces a completely different
+signature.
+
+```js title="Node.js / Express"
+import express from "express";
+import crypto from "crypto";
+
+const app = express();
+// Capture raw bytes - re-parsing then re-serializing JSON can produce
+// different bytes than what was actually signed, breaking verification.
+app.use(express.raw({ type: "application/json" }));
+
+app.post("/webhooks/nexalware", (req, res) => {
+  const expected = "sha256=" + crypto
+    .createHmac("sha256", process.env.NEXALWARE_WEBHOOK_SECRET)
+    .update(req.body)
+    .digest("hex");
+
+  if (req.headers["x-nexalware-signature"] !== expected) {
+    return res.sendStatus(401);
+  }
+
+  const { type, data } = JSON.parse(req.body);
+  // ...use type/data...
+
+  res.sendStatus(200); // 2xx tells Nexalware this delivery succeeded
+});
+
+app.listen(3000);
+```
+
+```python title="Python / Flask"
+import hmac, hashlib, os, json
+from flask import Flask, request, abort
+
+app = Flask(__name__)
+
+@app.post("/webhooks/nexalware")
+def nexalware_webhook():
+    expected = "sha256=" + hmac.new(
+        os.environ["NEXALWARE_WEBHOOK_SECRET"].encode(),
+        request.get_data(),
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(request.headers.get("X-Nexalware-Signature", ""), expected):
+        abort(401)
+
+    payload = json.loads(request.get_data())
+    # ...use payload["type"]/payload["data"]...
+
+    return "ok", 200
+```
+
+## Respond 2xx, or expect a retry
+
+Your endpoint has 10 seconds to respond. Anything other than a `2xx`
+status - a timeout, a `4xx`/`5xx`, a dropped connection - counts as a
+failed delivery, and it retries up to 5 times with exponential backoff
+(roughly 5s, 10s, 20s, 40s, 80s) before giving up. Each attempt, success or
+failure, is logged and visible from the Webhooks page's delivery log for
+that webhook - useful for telling "my server was down for a minute,
+recovered" apart from "this has never once succeeded."
+
+Because of retries, handle deliveries idempotently where it matters -
+`id` (`whd_...`) is unique per delivery *attempt*, so a retried event
+arrives with a new `id` each time; key any dedupe logic off the event's own
+identity inside `data` instead (e.g. `deviceId` + `timestamp`) if
+processing the same underlying event twice would cause a problem for you.
+
+## Where to go from here
+
+- **Webhooks** (the group below this one in the sidebar) - the endpoints for
+  creating, rotating, disabling, and deleting a webhook. The dashboard's
+  Webhooks page wraps the same calls, if you'd rather not call them directly.
+- [WebSocket](/docs/reference/websocket) - the equivalent live feed for a
+  connection you hold open yourself, if you'd rather not run a public
+  endpoint at all.

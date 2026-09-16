@@ -1,0 +1,48 @@
+---
+title: API Reference
+description: Every documented endpoint, grouped by who can call it.
+---
+
+The pages under this section are generated directly from Nexalware's live
+OpenAPI spec. Nothing here is hand-written or manually kept in sync - if an
+endpoint changes shape, this reference updates automatically the next time
+it's published.
+
+## Reading the sidebar
+
+The endpoints are grouped by category, and the grouping tells you exactly
+who can call each one:
+
+- **Authentication** - logs an existing account in and returns a session
+  token (or refreshes/revokes one). No API key or prior session needed to
+  call these - they're how you get a session token in the first place.
+- **Device Control** - callable with an API key (`X-Api-Key` header), once
+  that key has a [DeviceGrant](/docs/concepts/authentication-and-access)
+  covering the device and command. This is the small surface meant for
+  scripts and integrations: sending commands, reading a device's command
+  catalog, reading telemetry, and browsing the hardware/app catalog.
+- **Everything else** (Devices, Schedules, Grants, API Keys, Rules, Events,
+  Approvals) - session-only. These reject an API key outright, no matter
+  what it's been granted. Registering devices, creating API keys, creating
+  DeviceGrants, and configuring schedules/rules all live here - see each
+  page's Authorization section for the exact scheme it requires.
+- **WebSocket** - a live push feed, listed last since it isn't a
+  request/response endpoint like everything above it (see the
+  [WebSocket reference](/docs/reference/websocket)).
+
+Each generated page also shows its HTTP method as a colored badge next to
+its name in the sidebar, and lists the exact request/response schemas that
+validate every call, not hand-typed examples.
+
+If you're looking for a narrative walkthrough instead of an endpoint-by-endpoint
+reference, start at the [Quickstart](/docs/quickstart) or the
+[Guides](/docs/guides/send-a-command-with-an-api-key) section.
+
+<Callout type="info" title="Looking for the device side instead?">
+  This section documents the HTTP API your application or agent calls. If
+  you're writing the firmware that runs *on* a device, see the
+  [MicroPython Reference](/docs/micropython-reference) or the
+  [Arduino IDE / C Language Reference](/docs/arduino-reference) instead -
+  those cover the MQTT protocol your hardware speaks, which is a separate,
+  simpler surface from everything in this section.
+</Callout>

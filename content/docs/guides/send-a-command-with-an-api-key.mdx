@@ -1,0 +1,90 @@
+---
+title: Send a Command with an API Key
+description: The core loop, runnable end to end with just an API key - no dashboard session required.
+---
+
+This guide assumes you already have an API key with a
+[DeviceGrant](/docs/guides/create-a-scoped-device-grant) covering the device
+and command you're about to send - that part *is* a dashboard action, done
+once by an Owner/Admin. Everything below uses only the key.
+
+<Steps>
+
+<Step>
+
+### Check what the device actually supports
+
+Don't hardcode command names - ask the device:
+
+```bash
+curl "https://api.nexalware.com/api/v1/devices/dev_a1b2c3/commands" \
+  -H "X-Api-Key: $NEXALWARE_API_KEY"
+```
+
+For a legacy device (no device type) this always returns the fixed set -
+`ON`, `OFF`, `TOGGLE`, `STATUS`, `GET_SCHEDULES`. For a catalog-backed
+device it returns that type's real `CommandDefinition` list, including
+each command's `paramsSchema` - see
+[Commands & Validation](/docs/concepts/commands-and-validation).
+
+</Step>
+
+<Step>
+
+### Send the command
+
+```bash
+curl -X POST "https://api.nexalware.com/api/v1/devices/dev_a1b2c3/command" \
+  -H "X-Api-Key: $NEXALWARE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"cmd": "ON"}'
+```
+
+For `ON`/`OFF` specifically, the shorthand endpoints skip the JSON body
+entirely:
+
+```bash
+curl -X POST "https://api.nexalware.com/api/v1/devices/dev_a1b2c3/command/on" \
+  -H "X-Api-Key: $NEXALWARE_API_KEY"
+```
+
+</Step>
+
+<Step>
+
+### Handle the three real outcomes
+
+```bash
+# 200 - sent
+{"ok": true}
+
+# 202 - this command requires human approval; it's pending, not sent
+{"ok": true, "approvalRequired": true, "approvalId": "appr_..."}
+
+# 403 - not permitted; `message` says exactly why and how to fix it
+{"error": "FORBIDDEN", "message": "This API key's access to this device doesn't include \"ON\". Ask an account Admin or Owner to grant this API key access from the device's Permissions tab."}
+```
+
+If you get the 403 above, the fix is
+[granting the key that command](/docs/guides/create-a-scoped-device-grant),
+not a client-side retry. See [Errors](/docs/concepts/errors) for the full
+set of shapes you might hit (bad params, unknown command, rate limits,
+time windows).
+
+</Step>
+
+<Step>
+
+### Confirm it landed
+
+```bash
+curl "https://api.nexalware.com/api/v1/devices/dev_a1b2c3/telemetry/latest" \
+  -H "X-Api-Key: $NEXALWARE_API_KEY"
+```
+
+See [Subscribe to Device Events](/docs/guides/subscribe-to-device-events)
+for a push-based alternative to polling this.
+
+</Step>
+
+</Steps>

@@ -1,0 +1,249 @@
+---
+title: Introduction
+description: Connect software and AI agents to the physical world.
+---
+
+**Nexalware is AIoT infrastructure that lets your software communicate with
+and control your physical devices, machines, and agents through a single
+API.**
+
+If your application needs to turn on a pump, read a sensor, open a gate,
+move a vehicle, monitor a machine, or coordinate physical systems, Nexalware
+provides the infrastructure that connects your software to those systems.
+
+Instead of building device connectivity, authentication, command handling,
+telemetry, and automation yourself, you connect your application to
+Nexalware and work with your physical systems through a consistent API.
+
+```text
+   YOUR SOFTWARE
+   AI Agent · Backend · App
+            │
+            │  Nexalware API
+            ↓
+       ┌───────────┐
+       │ NEXALWARE │
+       └─────┬─────┘
+             │
+             ↓
+     YOUR PHYSICAL DEVICES
+   ┌─────────┬─────────┬─────────┐
+   ↓         ↓         ↓         ↓
+ Device    Machine   Vehicle   Sensor
+```
+
+## What you can do with Nexalware
+
+Nexalware gives your software a simple way to work with your physical
+systems.
+
+<Cards>
+  <Card
+    title="Connect"
+    href="/docs/concepts/devices-and-device-types"
+    description="Connect your physical devices and machines to Nexalware and give them an identity, credentials, and defined capabilities."
+  />
+  <Card
+    title="Read"
+    href="/docs/concepts/events-and-telemetry"
+    description="Read device state, telemetry, and events from your application."
+  />
+  <Card
+    title="Control"
+    href="/docs/concepts/commands-and-validation"
+    description="Send commands to physical devices through a validated and permission-controlled API."
+  />
+  <Card
+    title="Automate"
+    href="/docs/concepts/rules"
+    description="Create rules and schedules that allow physical systems to respond automatically."
+  />
+  <Card
+    title="Build with AI"
+    description="Allow AI agents to interact with your physical systems through the same infrastructure your applications use."
+  />
+</Cards>
+
+## The platform in one picture
+
+Think of Nexalware as the layer between your software and the physical
+systems it needs to interact with.
+
+```text
+                 YOUR SOFTWARE
+      ┌─────────────────────────┐
+      │                         │
+      │  AI Agents              │
+      │  Backend Services       │
+      │  Web & Mobile Apps      │
+      │  Automation             │
+      │                         │
+      └────────────┬────────────┘
+                    │
+                    ↓
+             ┌───────────────┐
+             │   NEXALWARE   │
+             │               │
+             │ Connectivity  │
+             │ Identity      │
+             │ Permissions   │
+             │ Commands      │
+             │ Telemetry     │
+             │ Events        │
+             │ Automation    │
+             └───────┬───────┘
+                     │
+                     ↓
+              YOUR PHYSICAL DEVICES
+      ┌─────────┬─────────┬─────────┐
+      ↓         ↓         ↓         ↓
+    Devices   Machines  Vehicles  Sensors
+```
+
+## Devices today, physical agents tomorrow
+
+Today, the Nexalware API is centered around devices.
+
+A device can represent a smart socket, pump, sensor, motor, gateway, or
+another connected physical system.
+
+As the platform evolves, Nexalware is expanding this model toward physical
+agents. A physical agent can have its own identity, capabilities, state,
+permissions, sensors, actions, and relationships with other agents.
+
+That creates a broader model:
+
+```text
+             AI Agent
+                 │
+                 ↓
+             Nexalware
+                 │
+        ┌────────┼────────┐
+        ↓        ↓        ↓
+     Vehicle   Security   Gate
+      Agent     Agent     Agent
+        │        │        │
+        ↓        ↓        ↓
+     Physical systems and machines
+```
+
+## How the API fits in
+
+The Nexalware API is the interface between your application and the
+Nexalware platform. Your application uses the API to:
+
+- discover devices
+- read device state
+- read telemetry
+- send commands
+- receive events
+- create automations
+- manage authorized access
+
+Physical devices connect to Nexalware's infrastructure through supported
+device communication protocols. For the current platform, devices connect
+through MQTT. Your application does not need to manage that MQTT connection
+when using the HTTP API - but if you're writing the firmware for the device
+itself, see the [MicroPython Reference](/docs/micropython-reference) or
+[Arduino IDE / C Language Reference](/docs/arduino-reference).
+
+```text
+Your Application
+       │
+       │ HTTP API
+       ↓
+   Nexalware
+       │
+       │ Device connectivity
+       ↓
+      MQTT
+       │
+       ↓
+    Device
+```
+
+The protocol used underneath can change without requiring your application
+to change how it works with Nexalware.
+
+## Authentication and access
+
+Nexalware separates human access from application access.
+
+### API keys
+
+API keys are used by applications, backend services, scripts, and
+integrations. An API key must have a DeviceGrant that defines which devices
+and commands it can access.
+
+```text
+X-Api-Key: your_api_key
+```
+
+### Dashboard sessions
+
+Dashboard sessions are used by people logged into the Nexalware dashboard.
+Dashboard-only actions include:
+
+- creating devices
+- creating API keys
+- managing DeviceGrants
+- creating schedules
+- creating rules
+
+The [API Reference](/docs/reference) shows which authentication mode each
+endpoint requires.
+
+## Start building
+
+The easiest way to understand Nexalware is to connect a device and make
+your first API request. Start with the [Quickstart](/docs/quickstart) to
+connect a device, authenticate your application, read its state, and send
+your first command.
+
+Then explore:
+
+<Cards>
+  <Card
+    title="Devices & device types"
+    href="/docs/concepts/devices-and-device-types"
+    description="A device is a physical thing with credentials. A device type is an optional catalog of commands it understands."
+  />
+  <Card
+    title="Commands & validation"
+    href="/docs/concepts/commands-and-validation"
+    description="Every command is checked against the device's catalog and its JSON Schema before it's allowed to run."
+  />
+  <Card
+    title="Authentication & access"
+    href="/docs/concepts/authentication-and-access"
+    description="API keys are scoped by DeviceGrants. A key with no grant can do nothing."
+  />
+  <Card
+    title="Rules & schedules"
+    href="/docs/concepts/rules"
+    description="Condition-based automation and time-based automation, both dashboard-configured."
+  />
+  <Card
+    title="Events & telemetry"
+    href="/docs/concepts/events-and-telemetry"
+    description="Read device state over REST, or subscribe to a live WebSocket feed."
+  />
+  <Card
+    title="API Reference"
+    href="/docs/reference"
+    description="Every endpoint, generated directly from the live OpenAPI spec."
+  />
+  <Card
+    title="MicroPython Reference"
+    href="/docs/micropython-reference"
+    description="The device side of the loop: connect, subscribe, dispatch on cmd, publish status/telemetry, in Python."
+  />
+  <Card
+    title="Arduino IDE / C Language Reference"
+    href="/docs/arduino-reference"
+    description="The same device-side loop in C++, for boards programmed from the Arduino IDE."
+  />
+</Cards>
+
+Build software that can interact with your physical world.

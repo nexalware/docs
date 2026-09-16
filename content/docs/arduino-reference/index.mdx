@@ -1,0 +1,278 @@
+---
+title: Arduino IDE / C Language Reference
+description: A working C++ starting point - connect, subscribe, dispatch on cmd, publish status/telemetry.
+---
+
+This is the device side of the loop the rest of these docs describe from the
+application side. Your firmware speaks plain MQTT to the same broker your
+dashboard and API keys talk to through the bridge - there's no separate
+"device API." Get credentials once from the Credentials tab (or
+`POST /api/v1/devices/{deviceId}/credentials`, dashboard-only), paste them
+into the generated header, and the code below is a complete, runnable
+starting point for the Arduino IDE.
+
+<Callout type="info" title="Which reference do I need?">
+  This page is for boards programmed from the **Arduino IDE** (or
+  `arduino-cli`) using a board core - ESP32, ESP8266, and Raspberry Pi
+  Pico/Pico W (via the `arduino-pico` core) are the common ones. If you'd
+  rather run MicroPython firmware on the same board instead, see the
+  [MicroPython Reference](/docs/micropython-reference). If your board is a
+  full Linux computer - a Raspberry Pi 3/4/5 or Zero running Raspberry Pi
+  OS, not the Pico - it doesn't use an Arduino core at all; use regular
+  desktop Python with the `paho-mqtt` package against the same host, port,
+  topics, and credentials shown below. And regardless of board: the
+  protocol underneath is plain MQTT, so anything with a TCP stack and an
+  MQTT client library can connect the same way - Arduino and MicroPython
+  are just the two most common starting points, not a requirement.
+</Callout>
+
+<Callout type="warn" title="Plain MQTT, no TLS yet">
+  The broker listens on port 1883 with no TLS listener today - credentials go
+  over the wire in plaintext. Treat this the way you'd treat any
+  unencrypted-transport IoT deployment: fine on a trusted network, not
+  something to expose directly to the open internet. A TLS listener is on the
+  roadmap; nothing here depends on which port you're using, so migrating
+  later is a one-line change.
+</Callout>
+
+## What you need
+
+- A device registered and credentialed - see
+  [Register Your First Device](/docs/guides/register-your-first-device) or
+  the Credentials tab.
+- Two libraries - see **Install the libraries** below.
+- The Credentials tab's **ESP / Arduino (C)** toggle, which generates the
+  `#define` block below directly from your device's real credentials -
+  paste it in as-is:
+
+```cpp title="nxw_config.h"
+// Nexalware Device Configuration
+// Device: dev_a1b2c3
+// WARNING: Keep this private. Do not commit to version control.
+
+#define NXW_DEVICE_ID    "dev_a1b2c3"
+#define NXW_MQTT_HOST    "mqtt.nexalware.com"
+#define NXW_MQTT_PORT    1883
+#define NXW_MQTT_WS      8083
+#define NXW_MQTT_USER    "d_a1b2c3d4"
+#define NXW_MQTT_PASS    "••••••••••••••••"
+#define NXW_TOPIC_CMD    "nexalware/devices/dev_a1b2c3/command"
+#define NXW_TOPIC_STATUS "nexalware/devices/dev_a1b2c3/status"
+#define NXW_TOPIC_SCHED  "nexalware/devices/dev_a1b2c3/schedule"
+```
+
+## Install the libraries
+
+Both libraries install the same way, from inside the Arduino IDE - no
+separate package manager or command line needed:
+
+1. Open **Sketch → Include Library → Manage Library...** (or the Library
+   Manager icon in the left sidebar, if you're on IDE 2.x).
+2. Search for **PubSubClient** (by Nick O'Leary) and click **Install**.
+3. Search for **ArduinoJson** (by Benoit Blanchon) and click **Install** -
+   pick the latest 6.x or 7.x release; the code below works on either.
+4. Make sure your board's core is installed too (**Tools → Board → Boards
+   Manager**, search for e.g. "esp32" or "esp8266") and that the right
+   board and port are selected under **Tools** before you build.
+
+If you're on the `arduino-cli` command line instead of the IDE:
+
+```bash
+arduino-cli lib install "PubSubClient"
+arduino-cli lib install "ArduinoJson"
+```
+
+`WiFi.h` used below comes with the ESP32/ESP8266 board core itself, not a
+separate library - no install needed once the board core from step 4 is in
+place.
+
+`NXW_MQTT_WS` is the mobile app's WebSocket port, not something firmware
+needs - ignore it. `NXW_TOPIC_SCHED` exists in the generated block for
+historical reasons but schedule-sync messages actually arrive on
+`NXW_TOPIC_CMD` alongside regular commands, same as everywhere else in this
+reference - don't bother subscribing to it separately.
+
+## Connect
+
+```cpp title="nxw.ino"
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include "nxw_config.h"
+
+WiFiClient net;
+PubSubClient client(net);
+
+void onMessage(char* topic, byte* payload, unsigned int length); // forward decl, defined below
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin("your-ssid", "your-password");
+  while (WiFi.status() != WL_CONNECTED) delay(250);
+
+  client.setServer(NXW_MQTT_HOST, NXW_MQTT_PORT);
+  client.setCallback(onMessage);
+  connectMqtt();
+}
+
+void connectMqtt() {
+  while (!client.connected()) {
+    if (client.connect(NXW_DEVICE_ID, NXW_MQTT_USER, NXW_MQTT_PASS)) {
+      client.subscribe(NXW_TOPIC_CMD, 1);
+      Serial.println("connected, listening on " NXW_TOPIC_CMD);
+    } else {
+      delay(2000); // retry
+    }
+  }
+}
+```
+
+`client.connect()`'s first argument is the MQTT client id - using the
+device id keeps it unique and traceable to broker-side logs if you ever
+need to debug a connection issue. The username/password pair is exactly
+what the Credentials tab handed you; nothing else identifies this device to
+the broker.
+
+## Subscribe to commands
+
+One topic carries everything the platform sends this device -
+[commands](/docs/concepts/commands-and-validation) and schedule-sync
+messages both arrive here, distinguished by `cmd`:
+
+```cpp
+client.subscribe(NXW_TOPIC_CMD, 1); // qos 1
+```
+
+The broker's ACL restricts this device's credentials to its own topics -
+subscribing to anything else fails at the broker, not silently.
+
+## Dispatch on cmd
+
+Every inbound message is a JSON object with a `cmd` field. Route on it the
+same way you'd route an HTTP request on a path:
+
+```cpp
+void onMessage(char* topic, byte* payload, unsigned int length) {
+  StaticJsonDocument<256> doc;
+  DeserializationError err = deserializeJson(doc, payload, length);
+  if (err) return; // malformed message, ignore rather than crash
+
+  const char* cmd = doc["cmd"];
+
+  if (strcmp(cmd, "ON") == 0) {
+    digitalWrite(RELAY_PIN, HIGH);
+    publishStatus();
+  } else if (strcmp(cmd, "OFF") == 0) {
+    digitalWrite(RELAY_PIN, LOW);
+    publishStatus();
+  } else if (strcmp(cmd, "STATUS") == 0) {
+    publishStatus();
+  } else if (strcmp(cmd, "SET_SCHEDULE") == 0) {
+    saveSchedule(doc); // slot, onTs, offTs, label, enabled
+  } else if (strcmp(cmd, "CANCEL_SCHEDULE") == 0) {
+    clearSchedule(doc["slot"]);
+  }
+  // Unrecognized cmd - a device type with a richer catalog than this
+  // firmware currently implements. Ignore, don't crash.
+}
+```
+
+```json title="Example ON command"
+{ "cmd": "ON" }
+```
+
+```json title="Example command with params"
+{ "cmd": "SET_ALTITUDE", "params": { "meters": 12 } }
+```
+
+`params` is only present for commands that take arguments - a device type's
+catalog defines which commands exist and what `params` each expects, but
+your firmware only needs to branch on the `cmd` strings it actually
+implements. Anything else, ignore.
+
+## Publish status and telemetry
+
+After any state change - or on a timer, for periodic reporting - publish a
+status message. Every field is optional; send only what changed:
+
+```cpp
+void publishStatus() {
+  StaticJsonDocument<256> doc;
+  doc["device_id"] = NXW_DEVICE_ID;
+  doc["relay"] = digitalRead(RELAY_PIN) ? "ON" : "OFF";
+  doc["uptime"] = millis() / 1000;
+  doc["ts"] = time(nullptr);
+
+  char buf[256];
+  size_t n = serializeJson(doc, buf);
+  client.publish(NXW_TOPIC_STATUS, buf, n);
+}
+
+void publishTelemetry(const char* metric, float value, const char* unit) {
+  StaticJsonDocument<256> doc;
+  doc["device_id"] = NXW_DEVICE_ID;
+  JsonArray telemetry = doc.createNestedArray("telemetry");
+  JsonObject reading = telemetry.createNestedObject();
+  reading["metric"] = metric;
+  reading["value"] = value;
+  reading["unit"] = unit;
+
+  char buf[256];
+  size_t n = serializeJson(doc, buf);
+  client.publish(NXW_TOPIC_STATUS, buf, n);
+}
+```
+
+```json title="Example status publish"
+{ "device_id": "dev_a1b2c3", "relay": "ON", "uptime": 4213, "ts": 1732000000 }
+```
+
+```json title="Example telemetry publish"
+{
+  "device_id": "dev_a1b2c3",
+  "telemetry": [{ "metric": "temperature", "value": 21.4, "unit": "celsius" }]
+}
+```
+
+Anyone subscribed to the live feed - the dashboard, or an application via
+[WebSocket](/docs/reference/websocket) - sees these the moment the broker
+relays them, no polling involved.
+
+## Handle schedule sync
+
+[Schedules](/docs/concepts/schedules) configured from the dashboard sync to
+the device over the same command topic as regular commands, using two
+reserved `cmd` values:
+
+```json title="SET_SCHEDULE"
+{ "cmd": "SET_SCHEDULE", "slot": 0, "onTs": 1732003600, "offTs": 1732032400, "label": "Morning cycle", "enabled": true }
+```
+
+```json title="CANCEL_SCHEDULE"
+{ "cmd": "CANCEL_SCHEDULE", "slot": 0 }
+```
+
+A minimal firmware only needs to persist these (to EEPROM/flash) and check
+them against the current time in `loop()` - or, if the device stays online,
+simply wait for the platform to send `ON`/`OFF` directly when a slot's
+`onTs`/`offTs` is reached. Either approach is valid; the platform sends both
+the sync message and the eventual command.
+
+## The full loop
+
+```cpp
+void loop() {
+  if (!client.connected()) connectMqtt();
+  client.loop(); // non-blocking; calls onMessage for anything queued
+}
+```
+
+`PubSubClient::loop()` returns immediately if nothing arrived, so it's safe
+to call on every pass of `loop()` alongside sensor polling or other work.
+
+## Where to go from here
+
+- [MicroPython Reference](/docs/micropython-reference) - the same loop in
+  Python, for boards you'd rather program without the Arduino IDE.
+- [Commands & Validation](/docs/concepts/commands-and-validation) - how a
+  device type's catalog defines the commands you branch on above.

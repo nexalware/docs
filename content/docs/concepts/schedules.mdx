@@ -1,0 +1,38 @@
+---
+title: Schedules
+description: Time-based automation - one on/off pair per slot, per device.
+---
+
+A `Schedule` is per-device, time-based automation, also dashboard-only.
+A device has a fixed number of **slots**
+(`GET`/`POST /api/v1/devices/{deviceId}/schedules`,
+`PUT`/`DELETE .../schedules/{slot}`), and each slot fires two commands at
+two Unix timestamps:
+
+| Field | Meaning |
+|---|---|
+| `slot` | Which slot on the device this occupies - one schedule per slot |
+| `onTs` / `offTs` | Unix timestamps the on/off commands fire at |
+| `onCommand` / `offCommand` | `{ command, params? }` - defaults to `{"command":"ON"}` / `{"command":"OFF"}`, but any command the device's own catalog supports can be used instead |
+| `label` | Free-text label |
+| `enabled` | Whether this slot is currently active |
+| `manualOverride` | Set when a human action superseded the schedule's own state |
+| `status` | `PENDING`, or a completed/cancelled terminal state |
+
+The default `onCommand`/`offCommand` shape (`{"command":"ON"}`) exists to
+match the simple relay case and the `SET_SCHEDULE` sync that legacy firmware
+still expects - devices without a richer catalog don't need to think about
+this field at all.
+
+Two read helpers round out the endpoint set:
+
+- `GET /api/v1/devices/{deviceId}/schedules/context` - the command choices
+  available for scheduling this specific device (same idea as rules'
+  `/context` endpoint).
+- `GET /api/v1/devices/{deviceId}/schedules/history` - completed/cancelled
+  schedules, for an audit trail of what actually ran.
+
+Legacy binary devices also understand `GET_SCHEDULES` as a direct command
+(see [Devices & Device Types](/docs/concepts/devices-and-device-types)) -
+that's the firmware-facing read path; the REST endpoints above are the
+dashboard/API-facing configuration path.

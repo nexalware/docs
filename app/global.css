@@ -1,0 +1,134 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Nexalware brand tokens - copied as static values from
+   frontend/src/app/globals.css (not imported; docs/ has its own build).
+   Dark-mode only, single teal accent.
+   ────────────────────────────────────────────────────────────────────────*/
+:root {
+  --color-nxw-bg: #0a0f0d;
+  --color-nxw-surface: #0b0f0d;
+  --color-nxw-surface-raise: #151917;
+  --color-nxw-surface-high: #1f1f1f;
+  --color-nxw-teal: #00d4aa;
+  --color-nxw-teal-dim: #00d4aa14;
+  --color-nxw-teal-glow: #00d4aa33;
+  --color-nxw-teal-border: #00d4aa55;
+  --color-nxw-success: #00b894;
+  --color-nxw-warning: #f6c90e;
+  --color-nxw-danger: #ff5c5c;
+  --color-nxw-text-primary: #ffffff;
+  --color-nxw-text-secondary: #b0b0b0;
+  --color-nxw-text-muted: #666666;
+  --color-nxw-border: #1f1f1f;
+  --color-nxw-border-light: #2a2a2a;
+
+  /* Fumadocs theme variables - remapped onto the Nexalware palette so every
+     built-in component (nav, sidebar, cards, search) picks up the brand
+     without touching Fumadocs internals. */
+  --color-fd-background: var(--color-nxw-bg);
+  --color-fd-foreground: var(--color-nxw-text-primary);
+  --color-fd-muted: var(--color-nxw-surface-raise);
+  --color-fd-muted-foreground: var(--color-nxw-text-secondary);
+  --color-fd-popover: var(--color-nxw-surface-raise);
+  --color-fd-popover-foreground: var(--color-nxw-text-primary);
+  --color-fd-card: var(--color-nxw-surface);
+  --color-fd-card-foreground: var(--color-nxw-text-primary);
+  --color-fd-border: var(--color-nxw-border);
+  --color-fd-primary: var(--color-nxw-teal);
+  --color-fd-primary-foreground: #00110c;
+  --color-fd-secondary: var(--color-nxw-surface-high);
+  --color-fd-secondary-foreground: var(--color-nxw-text-primary);
+  --color-fd-accent: var(--color-nxw-teal-dim);
+  --color-fd-accent-foreground: var(--color-nxw-teal);
+  --color-fd-ring: var(--color-nxw-teal-border);
+}
+
+/* Duplicated onto `.dark` explicitly (same specificity as `:root`, but this
+   guarantees the brand wins the cascade regardless of Tailwind v4's `@theme`
+   compilation order for the neutral preset's own `.dark { ... }` block). */
+.dark {
+  --color-fd-background: var(--color-nxw-bg);
+  --color-fd-foreground: var(--color-nxw-text-primary);
+  --color-fd-muted: var(--color-nxw-surface-raise);
+  --color-fd-muted-foreground: var(--color-nxw-text-secondary);
+  --color-fd-popover: var(--color-nxw-surface-raise);
+  --color-fd-popover-foreground: var(--color-nxw-text-primary);
+  --color-fd-card: var(--color-nxw-surface);
+  --color-fd-card-foreground: var(--color-nxw-text-primary);
+  --color-fd-border: var(--color-nxw-border);
+  --color-fd-primary: var(--color-nxw-teal);
+  --color-fd-primary-foreground: #00110c;
+  --color-fd-secondary: var(--color-nxw-surface-high);
+  --color-fd-secondary-foreground: var(--color-nxw-text-primary);
+  --color-fd-accent: var(--color-nxw-teal-dim);
+  --color-fd-accent-foreground: var(--color-nxw-teal);
+  --color-fd-ring: var(--color-nxw-teal-border);
+}
+
+html,
+body {
+  background: var(--color-nxw-bg);
+  color: var(--color-nxw-text-primary);
+}
+
+/* Radial glow - brand teal (matches frontend's `.teal-glow`) */
+.teal-glow {
+  background: radial-gradient(
+    ellipse 80% 60% at 50% -20%,
+    rgba(0, 212, 170, 0.16) 0%,
+    transparent 70%
+  );
+}
+
+/* Gradient text - brand teal (matches frontend's `.gradient-text-teal`) */
+.gradient-text-teal {
+  background: linear-gradient(135deg, #ffffff 0%, #6ef3d6 45%, #00d4aa 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.nxw-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid var(--color-nxw-teal-border);
+  background: var(--color-nxw-teal-dim);
+  padding: 0.35rem 0.85rem;
+  font-size: 0.8125rem;
+  color: var(--color-nxw-teal);
+}
+
+.nxw-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--color-nxw-teal);
+  box-shadow: 0 0 8px rgba(0, 212, 170, 0.7);
+}
+
+@keyframes nxw-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+.nxw-dot {
+  animation: nxw-pulse 2s ease-in-out infinite;
+}

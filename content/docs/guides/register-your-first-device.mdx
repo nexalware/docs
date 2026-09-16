@@ -1,0 +1,63 @@
+---
+title: Register Your First Device
+description: Get a device into your account and connected, from the dashboard.
+---
+
+Registering a device is a dashboard-session action
+(`POST /api/v1/devices/register`, session-only) - there's no API-key path
+for this, since it's account/project administration, not device control.
+
+<Steps>
+
+<Step>
+
+### Create a project (if you don't have one)
+
+Devices belong to a project. The Free plan allows one project; create more
+on a paid plan.
+
+</Step>
+
+<Step>
+
+### Register the device
+
+From the dashboard: Devices → Register Device. Under the hood this calls:
+
+```json title="POST /api/v1/devices/register"
+{
+  "projectId": "proj_xyz",
+  "name": "Greenhouse Pump"
+}
+```
+
+```json title="201 response"
+{ "deviceId": "dev_a1b2c3" }
+```
+
+Leave device type unassigned for now - that gets you the
+[legacy command set](/docs/concepts/devices-and-device-types) (`ON`, `OFF`,
+`TOGGLE`, `STATUS`, `GET_SCHEDULES`) with zero extra setup. Assign a device
+type later once you know what richer commands your hardware needs.
+
+</Step>
+
+<Step>
+
+### Generate credentials and connect the device
+
+`POST /api/v1/devices/{deviceId}/credentials` generates MQTT credentials for
+the device (also dashboard-only). Your firmware - or a simulator, for
+testing - connects with those and starts publishing status. Once it's
+online, `isOnline`/`lastSeen`/`relayState` on the device start reflecting
+reality, and you're ready to
+[send a command with an API key](/docs/guides/send-a-command-with-an-api-key).
+
+</Step>
+
+</Steps>
+
+## Next
+
+- [Send a Command with an API Key](/docs/guides/send-a-command-with-an-api-key)
+- [Create a Scoped Device Grant](/docs/guides/create-a-scoped-device-grant)

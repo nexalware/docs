@@ -1,0 +1,10 @@
+{
+  "title": "Guides",
+  "pages": [
+    "register-your-first-device",
+    "connect-a-micropython-device",
+    "send-a-command-with-an-api-key",
+    "create-a-scoped-device-grant",
+    "subscribe-to-device-events"
+  ]
+}

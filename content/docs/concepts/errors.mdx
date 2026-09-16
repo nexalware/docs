@@ -1,0 +1,100 @@
+---
+title: Errors
+description: The real (and slightly inconsistent) error shapes you'll actually see, documented honestly.
+---
+
+Nexalware's error responses aren't perfectly uniform across the API - this
+page documents what's actually there today rather than an idealized shape,
+so your error handling matches reality.
+
+## The three shapes you'll see
+
+**Plain `{ error }`** - most common. `error` is a short code or phrase, not
+meant for display as-is in every case:
+
+```json
+{ "error": "Device not found" }
+```
+
+**`{ error, message }`** - used when there's a machine-checkable code *and*
+a human-actionable explanation worth showing directly. This is the shape
+every DeviceGrant rejection uses:
+
+```json
+{ "error": "FORBIDDEN", "message": "..." }
+```
+
+**`{ error: 'Validation error', details: [...] }`** - body-validation
+failures. The API gateway's Zod schemas reject malformed request bodies
+before your handler ever runs, and the global error handler converts that
+into this shape automatically:
+
+```json
+{
+  "error": "Validation error",
+  "details": [ /* Zod's own issue objects */ ]
+}
+```
+
+Command-parameter validation (Ajv, not Zod - see
+[Commands & Validation](/docs/concepts/commands-and-validation)) uses a
+related but distinct shape, spreading the validation error directly:
+
+```json
+{
+  "code": "INVALID_PARAMS",
+  "error": "INVALID_PARAMS",
+  "message": "Parameters for \"SET_ALTITUDE\" did not pass validation.",
+  "details": ["/meters must be <= 500"]
+}
+```
+
+## The canonical example: an actionable 403
+
+The best-designed error in the API is the DeviceGrant rejection, because it
+tells you the specific fix and who has to make it - not just that you were
+denied. Two real variants, quoted verbatim from the API's actual response:
+
+**No grant at all for this device:**
+
+```json
+{
+  "error": "FORBIDDEN",
+  "message": "This API key has no access to this device yet. Ask an account Admin or Owner to grant this API key access from the device's Permissions tab."
+}
+```
+
+**A grant exists, but doesn't cover this specific command:**
+
+```json
+{
+  "error": "FORBIDDEN",
+  "message": "This API key's access to this device doesn't include \"SET_ALTITUDE\". Ask an account Admin or Owner to grant this API key access from the device's Permissions tab."
+}
+```
+
+(A MEMBER team member sees the same two messages with "API key" swapped for
+"membership".) If you hit either of these, the fix is always the same: an
+Owner/Admin opens the device's **Permissions** tab and grants the calling
+key the missing command - see
+[Create a Scoped Device Grant](/docs/guides/create-a-scoped-device-grant).
+
+## Other 403 reasons worth knowing
+
+A grant that exists and covers the command can still be rejected, each with
+its own distinct message:
+
+- `"Access to \"<cmd>\" has expired or is outside its allowed time window."`
+- `"Rate limit exceeded (<n>/min) for this grant."`
+- `"Viewers can only read device status, not send commands."` (VIEWER team members, `ACTION`-kind commands only)
+
+## Status codes, generally
+
+| Code | Meaning here |
+|---|---|
+| `400` | Malformed body, or a command/params that failed validation |
+| `401` | Missing or invalid credentials |
+| `403` | Valid credentials, but not permitted - see `message` |
+| `404` | Device, command, project, etc. not found |
+| `409` | Conflict with current state (e.g. a duplicate schedule slot, expired command) |
+| `500` | Unhandled server error |

@@ -1,0 +1,37 @@
+{
+  "name": "docs",
+  "version": "0.0.29",
+  "private": true,
+  "scripts": {
+    "predev": "npm --prefix ../backend/services/api-gateway run generate:openapi && mkdir -p public/openapi && cp ../backend/services/api-gateway/openapi.json ./public/openapi/openapi.json",
+    "prebuild": "npm --prefix ../backend/services/api-gateway run generate:openapi && mkdir -p public/openapi && cp ../backend/services/api-gateway/openapi.json ./public/openapi/openapi.json",
+    "dev": "next dev -p 3002",
+    "build": "next build",
+    "start": "next start -p 3002",
+    "types:check": "next typegen && tsc --noEmit",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "cn": "^0.2.6",
+    "fumadocs-core": "16.15.11",
+    "fumadocs-mdx": "15.4.1",
+    "fumadocs-openapi": "^11.4.3",
+    "fumadocs-ui": "npm:@fumadocs/base-ui@16.15.11",
+    "lucide-react": "^1.43.0",
+    "next": "16.3.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/mdx": "^2.0.14",
+    "@types/node": "^26.5.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "16.3.4",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2"
+  }
+}

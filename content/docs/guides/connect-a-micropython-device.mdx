@@ -1,0 +1,82 @@
+---
+title: Connect a MicroPython Device
+description: The firmware-side counterpart to the Quickstart - get real hardware talking to Nexalware.
+---
+
+The [Quickstart](/docs/quickstart) walks through the application side of
+Nexalware - registering a device and calling it from an app or agent. This
+guide is the other half: getting the device itself, running MicroPython, to
+actually connect and start exchanging messages.
+
+<Steps>
+
+<Step>
+
+### Register a device and generate credentials
+
+From the dashboard: Devices → Register Device, then open the new device's
+Credentials tab and click Generate Credentials. This is the same step
+[Register Your First Device](/docs/guides/register-your-first-device)
+covers in more detail if you haven't done it before.
+
+</Step>
+
+<Step>
+
+### Copy the MicroPython config block
+
+On the Credentials tab, switch to the **MicroPython (Python)** toggle. It
+generates a `config.py` with this device's real host, port, username, and
+password already filled in - copy it as-is:
+
+```python title="config.py"
+NXW_DEVICE_ID = "dev_a1b2c3"
+NXW_MQTT_HOST = "mqtt.nexalware.com"
+NXW_MQTT_PORT = 1883
+NXW_MQTT_USER = "d_a1b2c3d4"
+NXW_MQTT_PASS = "••••••••••••••••"
+NXW_TOPIC_CMD = "nexalware/devices/dev_a1b2c3/command"
+NXW_TOPIC_STATUS = "nexalware/devices/dev_a1b2c3/status"
+```
+
+Save it as `config.py` on your device's filesystem, alongside `main.py`.
+The password is only ever shown once - if you lose it, generate new
+credentials rather than trying to recover it.
+
+</Step>
+
+<Step>
+
+### Run the reference firmware
+
+[MicroPython Reference](/docs/micropython-reference) has the full,
+annotated code - connect, subscribe to the command topic, dispatch on
+`cmd`, publish status. Copy it to `main.py` next to your `config.py` and
+run it (over the REPL with `mpremote`, `ampy`, or Thonny, or however you
+normally deploy to this board).
+
+</Step>
+
+<Step>
+
+### Confirm it's live
+
+Back on the dashboard, the device card flips to online and `lastSeen`
+starts updating - that's the status message your firmware just published
+arriving over the same bridge the API and WebSocket feed read from. Send a
+command from the dashboard (or `curl`, using
+[Send a Command with an API Key](/docs/guides/send-a-command-with-an-api-key))
+and confirm your firmware's `on_message` callback fires.
+
+</Step>
+
+</Steps>
+
+## What's next
+
+- [MicroPython Reference](/docs/micropython-reference) - the full API:
+  telemetry publishing, schedule sync, reconnection behavior.
+- [Arduino IDE / C Language Reference](/docs/arduino-reference) - the same
+  loop in C++, if a different board on your bench needs it.
+- [Commands & Validation](/docs/concepts/commands-and-validation) - how a
+  device type's catalog shapes which `cmd` values your firmware will see.

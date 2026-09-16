@@ -1,0 +1,130 @@
+---
+title: WebSocket
+description: A live push feed for device state changes, commands, and schedule activity.
+---
+
+`GET /api/v1/ws` streams device events to your application in real time, so
+you don't have to poll for changes.
+
+<Callout type="warn" title="Requires a session token">
+  Authenticate with the `token` query parameter set to a session token from
+  [Log in](/docs/reference/authentication/log-in-and-obtain-a-session-token) -
+  not an API key. There's no API-key-authenticated version of this feed yet.
+  If your integration only holds an API key, poll
+  [`GET /devices/{deviceId}/telemetry/latest`](/docs/reference/device-control/read-the-most-recent-value-per-telemetry-metric)
+  instead - see [Subscribe to Device Events](/docs/guides/subscribe-to-device-events)
+  for both approaches side by side.
+</Callout>
+
+## Connect
+
+```js
+const ws = new WebSocket(
+  `wss://api.nexalware.com/api/v1/ws?token=${sessionAccessToken}`,
+);
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  // msg.type identifies which kind of message this is - see below.
+};
+```
+
+If the token is missing, invalid, or expired, the connection closes
+immediately with code `4001`. Treat that as a signal to obtain a fresh token
+and reconnect, not as a transient network error.
+
+## Messages
+
+Every message is a JSON object with a `type` field. An `initial_state`
+message arrives immediately on connect; everything after that is pushed as
+it happens, in real time, for as long as the connection stays open.
+
+### `initial_state`
+
+Sent once, immediately after connecting: a snapshot of every device on your
+account, so your UI has something to render before any live event arrives.
+
+```json
+{
+  "type": "initial_state",
+  "devices": [
+    {
+      "deviceId": "dev_a1b2c3",
+      "name": "Greenhouse Pump",
+      "relay": true,
+      "isOnline": true,
+      "lastSeen": 1732000000
+    }
+  ]
+}
+```
+
+### `device_online` / `device_offline`
+
+Sent when a device's connection status changes - either because the device
+itself connected or disconnected, or because Nexalware detected it had gone
+quiet.
+
+```json
+{ "type": "device_online", "deviceId": "dev_a1b2c3", "accountId": "acc_x1y2z3", "timestamp": 1732000000000 }
+```
+
+```json
+{ "type": "device_offline", "deviceId": "dev_a1b2c3", "accountId": "acc_x1y2z3", "timestamp": 1732000000000 }
+```
+
+### `relay_changed`
+
+Sent when a device reports that its relay changed state. This reflects what
+the device itself reported back, not a direct echo of a command you sent.
+
+```json
+{
+  "type": "relay_changed",
+  "deviceId": "dev_a1b2c3",
+  "accountId": "acc_x1y2z3",
+  "relay": true,
+  "triggeredBy": "device",
+  "timestamp": 1732000000000
+}
+```
+
+### `telemetry`
+
+Sent once per reported metric - a device reporting three readings at once
+produces three separate messages, not one batched message.
+
+```json
+{
+  "type": "telemetry",
+  "deviceId": "dev_a1b2c3",
+  "accountId": "acc_x1y2z3",
+  "metric": "temperature",
+  "value": 21.4,
+  "valueText": null,
+  "unit": "celsius",
+  "timestamp": 1732000000000
+}
+```
+
+### `schedule_fired`
+
+Sent when a [schedule](/docs/concepts/schedules) reaches its on or off time
+and dispatches its command.
+
+```json
+{
+  "type": "schedule_fired",
+  "accountId": "acc_x1y2z3",
+  "deviceId": "dev_a1b2c3",
+  "slot": 0,
+  "command": "ON",
+  "timestamp": 1732000000000
+}
+```
+
+<Callout type="info" title="More event types may be added over time">
+  Handle unrecognized `msg.type` values by ignoring them rather than
+  treating them as errors, so your integration keeps working as new event
+  types are introduced.
+</Callout>

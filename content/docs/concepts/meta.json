@@ -1,0 +1,12 @@
+{
+  "title": "Concepts",
+  "pages": [
+    "devices-and-device-types",
+    "commands-and-validation",
+    "authentication-and-access",
+    "rules",
+    "schedules",
+    "events-and-telemetry",
+    "errors"
+  ]
+}

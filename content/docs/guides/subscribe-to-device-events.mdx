@@ -1,0 +1,59 @@
+---
+title: Subscribe to Device Events
+description: Two ways to get device state without hardcoding a polling loop that's too fast or too slow.
+---
+
+There are two real options here, and they're not equivalent - pick based on
+whether you have a dashboard session available.
+
+## Option A - poll telemetry with just an API key
+
+This is the only live-updates path that works with **only** an API key
+today; there is no API-key-authenticated push channel (see the callout
+below). It's still perfectly workable for most integrations:
+
+```bash
+curl "https://api.nexalware.com/api/v1/devices/dev_a1b2c3/telemetry/latest" \
+  -H "X-Api-Key: $NEXALWARE_API_KEY"
+```
+
+```json title="200 response"
+{
+  "relayState": true,
+  "telemetry": [
+    { "metric": "temperature", "value": 21.4, "timestamp": 1732000000 }
+  ]
+}
+```
+
+Poll this on whatever interval makes sense for your use case - seconds for
+something latency-sensitive, minutes for a dashboard widget. For a full
+history rather than just the latest value per metric, use
+`GET /api/v1/devices/{deviceId}/telemetry` instead.
+
+## Option B - the WebSocket feed, with a session token
+
+`GET /api/v1/ws` pushes updates as they happen instead of making you poll,
+but it authenticates with a **session token**, not an API key:
+
+```js
+const ws = new WebSocket(
+  `wss://api.nexalware.com/api/v1/ws?token=${sessionAccessToken}`,
+);
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  if (msg.type === 'initial_state') {
+    // msg.devices: [{ deviceId, name, relay, isOnline, lastSeen }, ...]
+  }
+  // every message after that is a live event - see the reference below.
+};
+```
+
+<Callout type="warn" title="There's no API-key-authenticated WebSocket yet">
+  If your integration genuinely needs push rather than poll and can't hold
+  a session token, Option A is the honest answer for now.
+</Callout>
+
+See the [WebSocket reference](/docs/reference/websocket) for the full
+message catalog and connection details.

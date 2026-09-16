@@ -1,0 +1,6 @@
+{
+  "title": "API Reference",
+  "description": "Generated live from the OpenAPI spec - never hand-written.",
+  "icon": "Webhook",
+  "pages": ["index", "authentication", "device-control", "...", "websocket", "receiving-webhooks"]
+}

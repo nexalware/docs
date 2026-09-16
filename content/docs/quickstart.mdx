@@ -1,0 +1,133 @@
+---
+title: Quickstart
+description: Create an account, mint an API key, grant it access to a device, send a command, and read it back.
+---
+
+This walks through the full loop once: a human sets things up on the
+dashboard, then a script talks to the API with nothing but an API key. Each
+step links to the Concepts page with the full detail.
+
+<Callout title="Two identities, one walkthrough">
+  Steps 1–3 are **dashboard-session actions** - an Owner/Admin has to do
+  these in the web app. Steps 4–5 use **only the API key** - no session, no
+  cookies, nothing but the key. That split is intentional; see
+  [Authentication & Access](/docs/concepts/authentication-and-access).
+</Callout>
+
+<Steps>
+
+<Step>
+
+### Create an account and register a device
+
+Sign up on the dashboard and register a device (Devices → Register Device).
+Registering a device is a dashboard-only action - see
+[`POST /api/v1/devices/register`](/docs/reference) - and it hands you the
+device its MQTT credentials so your firmware/simulator can connect. This
+quickstart continues with a simulator; if you have real hardware running
+MicroPython, see [Connect a MicroPython Device](/docs/guides/connect-a-micropython-device)
+instead - it covers this same registration step plus the firmware side.
+
+For the fastest possible path, this quickstart assumes a plain device with
+no custom device type, which understands the legacy command set: `ON`,
+`OFF`, `TOGGLE`, `STATUS`, `GET_SCHEDULES`. See
+[Devices & Device Types](/docs/concepts/devices-and-device-types) if you
+want a richer, validated command catalog instead.
+
+</Step>
+
+<Step>
+
+### Create an API key
+
+Settings → API Keys → Create Key. The raw key is shown **once**, at
+creation, and can't be recovered afterward - copy it now.
+
+```bash
+# You'll use this as the X-Api-Key header from here on.
+export NEXALWARE_API_KEY="sk_live_••••••••••••••••"
+```
+
+At this point the key can authenticate, but it can call almost nothing yet.
+See the next step.
+
+</Step>
+
+<Step>
+
+### Grant the key access to the device
+
+This is the step people miss: **a raw API key has zero device access until
+an Owner or Admin grants it some**, from that device's Permissions tab (or
+`POST /api/v1/devices/{deviceId}/grants` - also dashboard-only, an API key
+can never create a grant for itself). Grant it at least the `ON` and `OFF`
+commands:
+
+```json title="Grant request body (dashboard session)"
+{
+  "apiKeyId": "key_abc123",
+  "commands": ["ON", "OFF", "STATUS"],
+  "scope": "WRITE"
+}
+```
+
+Full field reference (expiry, day/time windows, rate limits) is in
+[Create a Scoped Device Grant](/docs/guides/create-a-scoped-device-grant).
+
+</Step>
+
+<Step>
+
+### Send a command with the API key
+
+Now, with nothing but the key:
+
+```bash
+curl -X POST "https://api.nexalware.com/api/v1/devices/dev_a1b2c3/command" \
+  -H "X-Api-Key: $NEXALWARE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"cmd": "ON"}'
+```
+
+```json title="200 response"
+{ "ok": true }
+```
+
+If the key isn't granted `ON` yet, you get a 403 with a message that tells
+you exactly what to do next - see
+[Errors](/docs/concepts/errors#the-canonical-example-an-actionable-403) for
+the real wording.
+
+</Step>
+
+<Step>
+
+### Read it back
+
+Either poll the latest telemetry/relay snapshot:
+
+```bash
+curl "https://api.nexalware.com/api/v1/devices/dev_a1b2c3/telemetry/latest" \
+  -H "X-Api-Key: $NEXALWARE_API_KEY"
+```
+
+```json title="200 response"
+{ "relayState": true, "telemetry": [] }
+```
+
+...or open the live WebSocket feed from the dashboard session for push
+updates instead of polling - see
+[Events & Telemetry](/docs/concepts/events-and-telemetry#the-websocket-feed).
+
+</Step>
+
+</Steps>
+
+## What's next
+
+- [Devices & Device Types](/docs/concepts/devices-and-device-types) - legacy vs. catalog-backed devices.
+- [Commands & Validation](/docs/concepts/commands-and-validation) - how a command is checked before it runs.
+- [Authentication & Access](/docs/concepts/authentication-and-access) - the full DeviceGrant model.
+- [API Reference](/docs/reference) - every endpoint, generated from the live spec.
+- [MicroPython Reference](/docs/micropython-reference) - the firmware side of this same loop, in Python.
+- [Arduino IDE / C Language Reference](/docs/arduino-reference) - the firmware side of this same loop, in C++.

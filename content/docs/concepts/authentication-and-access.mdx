@@ -1,0 +1,76 @@
+---
+title: Authentication & Access
+description: API keys, dashboard sessions, and the DeviceGrant model that connects them to real permissions.
+---
+
+There are exactly two ways to authenticate against the API, and they are
+not interchangeable.
+
+## API keys (`X-Api-Key`)
+
+A secret created on the dashboard (Settings → API Keys →
+`POST /api/v1/keys`, session-only). The raw value is shown once, at
+creation, and can't be recovered - only revoked and replaced.
+
+<Callout type="warn" title="A new key can call nothing">
+  Creating a key does not grant it any access. On its own it can
+  authenticate - prove it's a valid key for your account - but every
+  device-scoped endpoint will still reject it with a 403 until a DeviceGrant
+  says otherwise.
+</Callout>
+
+## Dashboard sessions (bearer token)
+
+The identity a logged-in human uses in the web app. Session-only endpoints
+in the [Reference](/docs/reference) require a session and reject an API key
+outright, no matter how permissive its grants are. This is why registering
+a device, creating a key, creating a DeviceGrant, and configuring
+schedules/rules are all dashboard-only: they're account-administration
+actions, not device-control actions.
+
+## DeviceGrant - the model that connects the two
+
+A `DeviceGrant` is what actually turns an API key (or a MEMBER/VIEWER team
+member) into something that can touch a device. Only an Owner/Admin session
+can create one (`POST /api/v1/devices/{deviceId}/grants`) - **an API key can
+never create a grant for itself**, directly or indirectly.
+
+| Field | Meaning |
+|---|---|
+| `apiKeyId` \| `membershipId` | Exactly one subject this grant applies to |
+| `deviceId` \| `projectId` | Scope to one device, or every device in a project |
+| `commands` | Array of command names this grant allows, or `["*"]` for all |
+| `scope` | `READ`, `WRITE`, or `FULL` (default `WRITE`) - a `READ` grant can't cover `ACTION`-kind commands |
+| `expiresAt` | Optional - grant stops applying after this instant |
+| `activeDays` | Optional - `0`=Sun … `6`=Sat; empty = every day |
+| `activeFromMinute` / `activeToMinute` | Optional - minutes since UTC midnight; wraps past midnight if `from > to` (e.g. an overnight 22:00–06:00 window) |
+| `rateLimitPerMinute` | Optional - max commands this grant allows per rolling 60s window |
+
+```json title="Example: an API key that can only turn a device on/off, on weekdays, 7am–10pm UTC"
+{
+  "apiKeyId": "key_abc123",
+  "commands": ["ON", "OFF"],
+  "scope": "WRITE",
+  "activeDays": [1, 2, 3, 4, 5],
+  "activeFromMinute": 420,
+  "activeToMinute": 1320
+}
+```
+
+### How a request resolves against grants
+
+When an API key calls a device endpoint, Nexalware looks up every grant for
+that key where `deviceId` matches **or** `projectId` matches the device's
+project, then filters to ones that cover the command being sent (exact name
+or `*`) and aren't `READ`-scope for an `ACTION`-kind command. Among what's
+left, it picks the first grant whose day/time window is currently active. If
+none exist at all, or none cover this specific command, or none are
+currently active, the request is rejected - each of those is a distinct 403
+message; see [Errors](/docs/concepts/errors) for the exact wording.
+
+## Practical rule of thumb
+
+If a script gets an unexpected 403, the fix is almost always the same: have
+an account Owner or Admin open the device's **Permissions** tab on the
+dashboard and grant the calling key the specific command(s) it needs. The
+API itself will tell you this - see the next page.

@@ -1,0 +1,96 @@
+---
+title: Create a Scoped Device Grant
+description: The one dashboard step every API-key integration needs before it can do anything.
+---
+
+<Callout type="warn" title="This step is a dashboard action">
+  Creating a DeviceGrant requires an Owner/Admin dashboard session -
+  `POST /api/v1/devices/{deviceId}/grants` is session-only and rejects API
+  keys outright. An API key can never grant itself (or any
+  other key) access. Do this once, from the dashboard's device Permissions
+  tab, then every subsequent command call in
+  [Send a Command with an API Key](/docs/guides/send-a-command-with-an-api-key)
+  needs nothing but the key.
+</Callout>
+
+<Steps>
+
+<Step>
+
+### Find the API key's id
+
+Settings → API Keys shows each key's `keyId` (from
+`GET /api/v1/keys`) - you need this, not the raw secret, to grant it access.
+
+</Step>
+
+<Step>
+
+### Open the device's Permissions tab and grant it
+
+The request the dashboard sends:
+
+```json title="POST /api/v1/devices/{deviceId}/grants"
+{
+  "apiKeyId": "key_abc123",
+  "commands": ["ON", "OFF", "STATUS"],
+  "scope": "WRITE"
+}
+```
+
+`commands` is required and must have at least one entry - use `["*"]` for
+"every command this device supports." `scope` defaults to `WRITE`; use
+`READ` for a key that should only ever call `QUERY`-kind commands
+(`STATUS`, telemetry, etc.), never `ACTION`-kind ones.
+
+</Step>
+
+<Step>
+
+### Optionally narrow it further
+
+All of these are optional and independent - combine as many as you need:
+
+```json title="Business-hours-only, rate-limited grant"
+{
+  "apiKeyId": "key_abc123",
+  "commands": ["ON", "OFF"],
+  "scope": "WRITE",
+  "activeDays": [1, 2, 3, 4, 5],
+  "activeFromMinute": 420,
+  "activeToMinute": 1320,
+  "rateLimitPerMinute": 10,
+  "expiresAt": "2027-01-01T00:00:00.000Z"
+}
+```
+
+See [Authentication & Access](/docs/concepts/authentication-and-access) for
+what each field means and how they combine during a request.
+
+</Step>
+
+<Step>
+
+### Verify it from the API-key side
+
+```bash
+curl -X POST "https://api.nexalware.com/api/v1/devices/dev_a1b2c3/command" \
+  -H "X-Api-Key: $NEXALWARE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"cmd": "ON"}'
+```
+
+A `200 {"ok": true}` means the grant took effect. A `403` means either the
+command isn't in `commands`, the current time is outside the active window,
+or the grant hasn't propagated to the right key/device - double check
+`apiKeyId` and `deviceId`/`projectId` match what you intended.
+
+</Step>
+
+</Steps>
+
+## Managing grants afterward
+
+- `GET /api/v1/devices/{deviceId}/grants` - list a device's grants (dashboard).
+- `PATCH /api/v1/devices/{deviceId}/grants/{grantId}` - update one (dashboard).
+- `DELETE /api/v1/devices/{deviceId}/grants/{grantId}` - revoke one (dashboard).

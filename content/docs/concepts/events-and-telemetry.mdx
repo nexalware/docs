@@ -1,0 +1,34 @@
+---
+title: Events & Telemetry
+description: Reading device state - over REST, and the /api/v1/ws WebSocket feed.
+---
+
+## Telemetry (API-key callable)
+
+Two `Device Control`-tagged endpoints read a device's reported state:
+
+- `GET /api/v1/devices/{deviceId}/telemetry` - history of readings.
+- `GET /api/v1/devices/{deviceId}/telemetry/latest` - the quickest
+  "current state" snapshot: one row per metric the device has ever reported,
+  plus its `relayState`. This is what
+  [the quickstart](/docs/quickstart) polls after sending a command.
+
+Both accept either an API key or a dashboard session - they're read paths
+with no side effects, so they're deliberately not locked to sessions the way
+configuration endpoints are.
+
+## Audit events (dashboard-only)
+
+Every command sent, grant change, and schedule/rule action is recorded as a
+`DeviceEvent` and readable via `GET /api/v1/events` (whole account) or
+`GET /api/v1/devices/{deviceId}/events` (single device) - both session-only.
+This is also what [DeviceGrant rate limiting](/docs/concepts/authentication-and-access)
+counts against: a `COMMAND_SENT` event tagged with the grant's id in its metadata.
+
+## The WebSocket feed
+
+`GET /api/v1/ws` is a live push feed of device state changes, so your
+application doesn't have to poll. It authenticates with a session token
+rather than an API key - see the [WebSocket reference](/docs/reference/websocket)
+for the connection details, the full message catalog, and how to handle the
+`4001` close code.

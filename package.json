@@ -3,8 +3,8 @@
   "version": "0.0.29",
   "private": true,
   "scripts": {
-    "predev": "npm --prefix ../backend/services/api-gateway run generate:openapi && mkdir -p public/openapi && cp ../backend/services/api-gateway/openapi.json ./public/openapi/openapi.json",
-    "prebuild": "npm --prefix ../backend/services/api-gateway run generate:openapi && mkdir -p public/openapi && cp ../backend/services/api-gateway/openapi.json ./public/openapi/openapi.json",
+    "predev": "test -d ../backend/services/api-gateway && (npm --prefix ../backend/services/api-gateway run generate:openapi && mkdir -p public/openapi && cp ../backend/services/api-gateway/openapi.json ./public/openapi/openapi.json) || echo 'No sibling backend/ found, using the committed public/openapi/openapi.json as-is.'",
+    "prebuild": "test -d ../backend/services/api-gateway && (npm --prefix ../backend/services/api-gateway run generate:openapi && mkdir -p public/openapi && cp ../backend/services/api-gateway/openapi.json ./public/openapi/openapi.json) || echo 'No sibling backend/ found, using the committed public/openapi/openapi.json as-is.'",
     "dev": "next dev -p 3002",
     "build": "next build",
     "start": "next start -p 3002",

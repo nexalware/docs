@@ -25,7 +25,10 @@ yarn-error.log*
 .vercel
 next-env.d.ts
 
-# OpenAPI spec — purely a regenerated build artifact (see package.json's
-# predev/prebuild), copied in from backend/services/api-gateway/openapi.json.
-# Never hand-edited, never committed.
-/public/openapi/*.json
+# OpenAPI spec — regenerated fresh from backend/services/api-gateway on
+# every local build (see package.json's predev/prebuild), but also
+# committed as-is: a standalone deploy (Vercel) of just this repo has no
+# sibling backend/ to regenerate from, so predev/prebuild fall back to
+# using whatever's already committed here instead of failing the build.
+# Re-run `npm run build` locally and commit the result after an API
+# change to keep this from going stale.

@@ -1,0 +1,6 @@
+{
+  "title": "Device Orchestration",
+  "description": "A device that coordinates sub-devices connected to it locally, instead of one device per Nexalware connection.",
+  "icon": "Workflow",
+  "pages": ["index", "sub-device-contract", "master-reference", "master-reference-arduino"]
+}

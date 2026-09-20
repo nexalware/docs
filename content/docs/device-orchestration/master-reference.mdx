@@ -1,0 +1,205 @@
+---
+title: Master Reference (MicroPython)
+description: Building the device that coordinates sub-devices locally and reports up to Nexalware.
+---
+
+A master is a normal Nexalware device. Everything in the
+[MicroPython Reference](/docs/micropython-reference) still applies:
+connect, subscribe, publish status. This page covers only what's added on
+top, three things:
+
+1. Hosting a local network that sub-devices connect to.
+2. Sending each sub-device's data up to Nexalware.
+3. Relaying commands back down to the right sub-device.
+
+Written in MicroPython here. If you're building on Arduino or another
+C++ toolchain instead, see the
+[Arduino / C++ version](/docs/device-orchestration/master-reference-arduino)
+of this same page, same three pieces, same message shapes.
+
+## 1. Run WiFi in two modes at once
+
+Your master needs two WiFi connections running at the same time:
+
+- **STA mode**: connects to your real WiFi network, so the master can reach Nexalware over the internet.
+- **AP mode**: the master broadcasts its own small WiFi network, the one your sub-devices join.
+
+```python title="wifi_setup.py"
+import network
+
+def start_ap(ssid, password):
+    ap = network.WLAN(network.AP_IF)
+    ap.active(True)
+    ap.config(essid=ssid, password=password, authmode=network.AUTH_WPA2_PSK)
+    print("Local network up:", ap.ifconfig()[0])  # 192.168.4.1 by default
+    return ap
+
+def connect_sta(ssid, password, timeout_s=15):
+    sta = network.WLAN(network.STA_IF)
+    sta.active(True)
+    if not sta.isconnected():
+        sta.connect(ssid, password)
+        import time
+        deadline = time.time() + timeout_s
+        while not sta.isconnected() and time.time() < deadline:
+            time.sleep_ms(250)
+    return sta.isconnected()
+```
+
+These two run independently of each other. If `connect_sta` fails (no
+internet available right now), your sub-devices can still connect to the
+AP and talk to the master. Controlling your sub-devices locally never
+depends on Nexalware being reachable, that's the whole point, see
+[Device Orchestration](/docs/device-orchestration) for why.
+
+## 2. Run a local WebSocket server for sub-devices to connect to
+
+Your sub-devices connect outward to the master, the master never has to
+find them. This means there's nothing to discover, every sub-device just
+connects to the master's fixed address, `192.168.4.1`, the moment it
+joins the AP network.
+
+[`microdot`](https://github.com/miguelgrinberg/microdot) is a small web
+framework that includes WebSocket support and runs fine on an ESP32.
+Install it once, from the device's own REPL:
+
+```bash
+mpremote connect /dev/ttyUSB0 mip install microdot
+```
+
+```python title="sub_device_server.py"
+from microdot import Microdot
+from microdot.websocket import with_websocket
+import ujson
+
+app = Microdot()
+
+# One entry per connected sub-device, external_id is whatever the
+# sub-device sent in its own `identify` message.
+sub_devices = {}
+
+@app.route("/sub-device")
+@with_websocket
+async def sub_device_socket(request, ws):
+    external_id = None
+    while True:
+        raw = await ws.receive()
+        msg = ujson.loads(raw)
+
+        if "type" not in msg:
+            continue  # not a message this contract defines, ignore it
+
+        if msg["type"] == "identify":
+            external_id = msg["id"]
+            sub_devices.setdefault(external_id, {})["identify"] = msg
+            sub_devices[external_id]["ws"] = ws
+        elif msg["type"] == "describe":
+            sub_devices[external_id]["describe"] = msg
+        elif msg["type"] == "state":
+            sub_devices[external_id]["state"] = msg
+        elif msg["type"] == "health":
+            sub_devices[external_id]["health"] = msg
+        elif msg["type"] == "result":
+            sub_devices[external_id]["last_result"] = msg
+        elif msg["type"] == "verify":
+            sub_devices[external_id]["last_verify"] = msg
+```
+
+Every message your sub-devices send follows the exact shape in the
+[Sub-Device Contract](/docs/device-orchestration/sub-device-contract). This
+handler just reads the `type` field and stores whatever came in, that's
+the entire local relay, everything below works off this same
+`sub_devices` dictionary.
+
+## 3. Send sub-device data up to Nexalware
+
+You already have a `publish_status()` function from the MicroPython
+reference, sending your master's own status. Add one field to it,
+`sub_devices`, built from the dictionary above:
+
+```python title="publish_status (extended)"
+def publish_status():
+    sub_device_reports = []
+    for external_id, sd in sub_devices.items():
+        report = {"external_id": external_id}
+        if "identify" in sd:
+            report["name"] = sd["identify"].get("name", external_id)
+        if "state" in sd:
+            report["state"] = sd["state"]
+        if "describe" in sd:
+            report["capabilities"] = sd["describe"]
+        sub_device_reports.append(report)
+
+    payload = {
+        "device_id": config.NXW_DEVICE_ID,
+        "ts": time.time(),
+        "sub_devices": sub_device_reports,
+    }
+    mqtt_client.publish(config.NXW_TOPIC_STATUS, ujson.dumps(payload))
+```
+
+Nothing about your master's own status fields changes, `sub_devices` just
+rides alongside them in the same message. The moment this reaches
+Nexalware, each sub-device gets its own record, visible on the dashboard
+and through the API, automatically.
+
+## 4. Relay commands down to the right sub-device
+
+You already have an `on_command` function from the MicroPython reference,
+handling commands sent to the master. Add one check at the top: if the
+command has a `target` field, it's meant for a sub-device, not the master
+itself.
+
+```python title="on_command (extended)"
+def on_command(topic, msg):
+    payload = ujson.loads(msg)
+    target = payload.get("target")
+
+    if target is None:
+        # existing logic for commands aimed at the master itself
+        return
+
+    sub_device = sub_devices.get(target)
+    if not sub_device or "ws" not in sub_device:
+        return  # this sub-device isn't connected right now, nothing to relay to
+
+    command_msg = {"type": "command", "cmd": payload["cmd"], "params": payload.get("params")}
+    send_to_sub_device(sub_device["ws"], command_msg)
+
+    # If this sub-device declared verifiable: true in its describe message,
+    # ask it to confirm, and treat that answer as final instead of trusting
+    # result alone. See the contract page for why that distinction matters.
+    if sub_device.get("describe", {}).get("verifiable"):
+        send_to_sub_device(sub_device["ws"], {"type": "verify", "cmd": payload["cmd"]})
+```
+
+<Callout type="warn" title="Sending on a WebSocket needs the event loop">
+  `on_command` runs as a plain callback from your MQTT client, not inside
+  microdot's async event loop, but `ws.send()` is an async function that
+  has to run on that loop. Calling it directly from `on_command` won't
+  work. You need one small helper that schedules the send onto the running
+  loop instead of calling it straight away:
+
+  ```python title="send_to_sub_device"
+  import uasyncio as asyncio
+
+  def send_to_sub_device(ws, message):
+      asyncio.create_task(ws.send(ujson.dumps(message)))
+  ```
+
+  This is the one genuinely fiddly part of wiring MQTT (synchronous) to a
+  WebSocket server (asynchronous) on the same board. If you're new to
+  `uasyncio`, this single function is the piece to understand, everything
+  else on this page is plain, ordinary code.
+</Callout>
+
+Once this runs, the full loop works end to end: Nexalware sends a command
+with `target` set, the master looks up that sub-device's connection,
+relays the command, and the sub-device's `result` (or `verify` answer, if
+it sent one) shows up in the very next `publish_status()` call.
+
+## Where to go from here
+
+- [The Sub-Device Contract](/docs/device-orchestration/sub-device-contract) - the exact messages every sub-device needs to send and receive.
+- [Master Reference (Arduino / C++)](/docs/device-orchestration/master-reference-arduino) - the same three pieces, for a C++ toolchain instead.
+- [MicroPython Reference](/docs/micropython-reference) - the base connect/subscribe/publish loop this page builds on.

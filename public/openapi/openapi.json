@@ -3,7 +3,7 @@
   "info": {
     "title": "Nexalware API",
     "version": "1.0.0",
-    "description": "Nexalware is infrastructure for AI agents, and the software you write yourself, to act in the physical world. This is the HTTP API behind it: control physical devices and read their telemetry. Endpoints are grouped by who can call them: \"Authentication\" logs an existing account in and returns a session token; \"Device Control\" works with an API key (scoped by a DeviceGrant); everything else manages dashboard resources (schedules, rules, grants, keys, devices) and is meant for the Nexalware web app itself, not third-party automation."
+    "description": "Nexalware is infrastructure for AI agents, and the software you write yourself, to act in the physical world. This is the HTTP API behind it: control physical devices and read their telemetry. Endpoints are grouped by who can call them: \"Authentication\" logs an existing account in and returns a session token; \"Device Control\" and \"Schedules\" work with an API key (scoped by a DeviceGrant); everything else manages dashboard resources (rules, grants, keys, devices, command catalogs) and is meant for the Nexalware web app itself, not third-party automation."
   },
   "servers": [
     {
@@ -17,12 +17,12 @@
         "type": "apiKey",
         "in": "header",
         "name": "X-Api-Key",
-        "description": "A secret API key created on the dashboard (Settings → API Keys). By itself it grants nothing - it must also have a DeviceGrant scoping it to the specific device(s) and command(s) it may call."
+        "description": "A secret API key created on the dashboard (API Keys page). By itself it grants nothing - it must also have a DeviceGrant scoping it to the specific device(s) and command(s) it may call."
       },
       "sessionAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "A session token for an existing account, obtained from POST /auth/login (see the Authentication endpoints) - not an API key. Endpoints marked with this scheme reject API key callers outright, regardless of what that key is granted. Outside the Authentication endpoints themselves, everything requiring this scheme manages dashboard resources (schedules, rules, grants, keys, device configuration) and mirrors what a human does in the Nexalware web app - it is not meant to be automated by a third-party integration the way the Device Control endpoints are."
+        "description": "A session token for an existing account, obtained from POST /auth/login (see the Authentication endpoints) - not an API key. Endpoints marked with this scheme reject API key callers outright, regardless of what that key is granted. Outside the Authentication endpoints themselves, everything requiring this scheme manages dashboard resources (rules, grants, keys, device configuration, command catalogs) and mirrors what a human does in the Nexalware web app - it is not meant to be automated by a third-party integration the way the Device Control and Schedules endpoints are."
       }
     },
     "schemas": {
@@ -240,7 +240,27 @@
             "example": "temperature"
           },
           "value": {
-            "type": "number"
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Numeric reading, null if this point only carried valueText.",
+            "example": 21.4
+          },
+          "valueText": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Non-numeric reading (e.g. a status string), null if this point only carried a numeric value.",
+            "example": null
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "celsius"
           },
           "recordedAt": {
             "type": "string",
@@ -294,9 +314,13 @@
         "type": "object",
         "properties": {
           "command": {
-            "type": "string"
+            "type": "string",
+            "description": "A command name from the device's catalog.",
+            "example": "ON"
           },
-          "params": {}
+          "params": {
+            "description": "Only if that command declares a paramsSchema."
+          }
         },
         "required": [
           "command"
@@ -306,7 +330,8 @@
         "type": "object",
         "properties": {
           "scheduleId": {
-            "type": "string"
+            "type": "string",
+            "example": "sched_a1b2c3"
           },
           "deviceId": {
             "type": "string"
@@ -317,10 +342,14 @@
             "maximum": 4
           },
           "onTs": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Unix seconds.",
+            "example": 1732003600
           },
           "offTs": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Unix seconds.",
+            "example": 1732032400
           },
           "label": {
             "type": "string"
@@ -335,7 +364,8 @@
               "ACTIVE",
               "COMPLETED",
               "CANCELLED"
-            ]
+            ],
+            "description": "PENDING = created, not yet due. ACTIVE = onTs has passed, offTs has not. COMPLETED = offTs has passed. CANCELLED = deleted before completing."
           },
           "onCommand": {
             "$ref": "#/components/schemas/Action"
@@ -381,10 +411,20 @@
               "type": "object",
               "properties": {
                 "metric": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "A telemetry metric this device has reported - see GET .../rules/context for the actual list.",
+                  "example": "temperature"
                 },
                 "comparator": {
-                  "type": "string"
+                  "type": "string",
+                  "enum": [
+                    ">",
+                    "<",
+                    ">=",
+                    "<=",
+                    "==",
+                    "!="
+                  ]
                 },
                 "value": {
                   "anyOf": [
@@ -394,7 +434,8 @@
                     {
                       "type": "string"
                     }
-                  ]
+                  ],
+                  "example": 28
                 }
               },
               "required": [
@@ -441,7 +482,26 @@
             "type": "string",
             "enum": [
               "device",
-              "project"
+              "project",
+              "sub_device"
+            ]
+          },
+          "subDevice": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "subDeviceId": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "subDeviceId",
+              "name"
             ]
           },
           "commands": {
@@ -515,6 +575,7 @@
         "required": [
           "grantId",
           "appliesVia",
+          "subDevice",
           "commands",
           "scope",
           "expiresAt",
@@ -692,16 +753,23 @@
             "type": "string"
           },
           "eventType": {
-            "type": "string"
+            "type": "string",
+            "description": "e.g. DEVICE_ONLINE, DEVICE_OFFLINE, RELAY_ON, RELAY_OFF, COMMAND_SENT, UNAUTHORIZED_ATTEMPT, SCHEDULE_CANCELLED.",
+            "example": "COMMAND_SENT"
           },
           "description": {
-            "type": "string"
+            "type": "string",
+            "example": "Command sent to Garage Light"
           },
           "timestamp": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Unix milliseconds.",
+            "example": 1732000000000
           },
           "source": {
-            "type": "string"
+            "type": "string",
+            "description": "What triggered this event, lowercased: \"schedule\", \"user\" (a dashboard session or API key), \"device\", \"system\", or \"rule\".",
+            "example": "user"
           }
         },
         "required": [
@@ -753,6 +821,96 @@
           "createdAt",
           "expiresAt"
         ]
+      },
+      "SubDevice": {
+        "type": "object",
+        "properties": {
+          "subDeviceId": {
+            "type": "string"
+          },
+          "externalId": {
+            "type": "string",
+            "description": "Whatever identifier the master itself assigns or discovers this sub-device by - the master's own concern, not Nexalware's."
+          },
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {}
+          },
+          "capabilities": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "commands": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "params_schema": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "telemetry_metrics": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "verifiable": {
+                "type": "boolean"
+              }
+            },
+            "description": "Whatever this sub-device's own `describe()` reported - Nexalware never assumes a shape in advance."
+          },
+          "verifiable": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "isOnline": {
+            "type": "boolean"
+          },
+          "lastSeen": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "subDeviceId",
+          "externalId",
+          "name",
+          "state",
+          "capabilities",
+          "verifiable",
+          "enabled",
+          "isOnline",
+          "lastSeen",
+          "createdAt"
+        ]
       }
     },
     "parameters": {
@@ -794,6 +952,10 @@
                   "email",
                   "password"
                 ]
+              },
+              "example": {
+                "email": "you@example.com",
+                "password": "your-password"
               }
             }
           }
@@ -805,6 +967,20 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TokenPair"
+                },
+                "example": {
+                  "accessToken": "eyJhbGciOi...",
+                  "refreshToken": "eyJhbGciOi...",
+                  "user": {
+                    "accountId": "acc_a1b2c3",
+                    "userId": "usr_a1b2c3",
+                    "email": "you@example.com",
+                    "name": "Jane Doe",
+                    "plan": "FREE",
+                    "role": "OWNER",
+                    "emailVerified": true,
+                    "onboardingCompleted": true
+                  }
                 }
               }
             }
@@ -865,6 +1041,9 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RefreshRequest"
+              },
+              "example": {
+                "refreshToken": "eyJhbGciOi..."
               }
             }
           }
@@ -888,6 +1067,10 @@
                     "accessToken",
                     "refreshToken"
                   ]
+                },
+                "example": {
+                  "accessToken": "eyJhbGciOi...",
+                  "refreshToken": "eyJhbGciOi..."
                 }
               }
             }
@@ -1288,7 +1471,7 @@
           "Devices"
         ],
         "summary": "Register a new device",
-        "description": "Creates the device record in a PENDING state with no MQTT credentials yet call \"Generate credentials\" separately before it can connect.",
+        "description": "Creates the device record in a PENDING state with no MQTT credentials yet call \"Generate credentials\" separately before it can connect. This is a dashboard/session action, a human registering a device, not something an API key does.",
         "security": [
           {
             "sessionAuth": []
@@ -1303,45 +1486,59 @@
                   "name": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 100
+                    "maxLength": 100,
+                    "description": "Shown on the dashboard and in device lists.",
+                    "example": "Garage Light"
                   },
                   "boardType": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Free text - whatever board this is, e.g. \"esp32\", \"esp8266\", \"raspberry-pi\". Not validated against a fixed list; see GET /catalog/boards for common values to offer in a picker.",
+                    "example": "esp32"
                   },
                   "appType": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "description": "Free text - the application/industry this device is used for. See GET /catalog/apps for common values to offer in a picker.",
+                    "example": "Industrial Automation"
                   },
                   "appTypeOther": {
                     "type": "string",
-                    "maxLength": 100
+                    "maxLength": 100,
+                    "description": "Only used when appType is \"Custom\" - the free-text value to show instead."
                   },
                   "projectId": {
                     "type": [
                       "string",
                       "null"
-                    ]
+                    ],
+                    "description": "Groups this device under an existing project. Omit to leave it ungrouped, or to fall back to the account's default project if one exists.",
+                    "example": "proj_a1b2c3"
                   },
                   "description": {
                     "type": "string",
-                    "maxLength": 500
+                    "maxLength": 500,
+                    "example": "Controls the light above the garage door."
                   },
                   "location": {
                     "type": "string",
-                    "maxLength": 200
+                    "maxLength": 200,
+                    "example": "Garage"
                   },
                   "manufacturer": {
                     "type": "string",
-                    "maxLength": 100
+                    "maxLength": 100,
+                    "example": "Espressif"
                   },
                   "model": {
                     "type": "string",
-                    "maxLength": 100
+                    "maxLength": 100,
+                    "example": "ESP32-WROOM-32"
                   },
                   "industry": {
                     "type": "string",
-                    "maxLength": 50
+                    "maxLength": 50,
+                    "example": "Home Automation"
                   },
                   "tags": {
                     "type": "array",
@@ -1349,7 +1546,11 @@
                       "type": "string",
                       "maxLength": 50
                     },
-                    "maxItems": 20
+                    "maxItems": 20,
+                    "example": [
+                      "garage",
+                      "lighting"
+                    ]
                   }
                 },
                 "required": [
@@ -1357,6 +1558,11 @@
                   "boardType",
                   "appType"
                 ]
+              },
+              "example": {
+                "name": "Garage Light",
+                "boardType": "esp32",
+                "appType": "Home Automation"
               }
             }
           }
@@ -1376,6 +1582,9 @@
                   "required": [
                     "deviceId"
                   ]
+                },
+                "example": {
+                  "deviceId": "nxw_dev_a1b2c3"
                 }
               }
             }
@@ -1476,10 +1685,13 @@
                   "name": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 100
+                    "maxLength": 100,
+                    "example": "Garage Light"
                   },
                   "projectId": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Move this device into a different project.",
+                    "example": "proj_a1b2c3"
                   },
                   "description": {
                     "type": [
@@ -1685,6 +1897,7 @@
           "Devices"
         ],
         "summary": "Define a custom command for a device",
+        "description": "Adds one command to this device's catalog (creating the catalog on first use). Once defined, any caller with a DeviceGrant covering this device can send it via POST /devices/{deviceId}/command.",
         "security": [
           {
             "sessionAuth": []
@@ -1705,16 +1918,21 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 64,
-                    "pattern": "^[A-Z0-9_]+$"
+                    "pattern": "^[A-Z0-9_]+$",
+                    "description": "The exact string clients will pass as `cmd` when sending this command. SCREAMING_SNAKE_CASE, must be unique per device type.",
+                    "example": "SET_BRIGHTNESS"
                   },
                   "label": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 100
+                    "maxLength": 100,
+                    "description": "Human-readable label shown on the dashboard.",
+                    "example": "Set brightness"
                   },
                   "description": {
                     "type": "string",
-                    "maxLength": 500
+                    "maxLength": 500,
+                    "example": "Sets the light to a specific brightness level."
                   },
                   "kind": {
                     "type": "string",
@@ -1722,14 +1940,26 @@
                       "ACTION",
                       "QUERY"
                     ],
-                    "default": "ACTION"
+                    "default": "ACTION",
+                    "description": "\"ACTION\" changes device state (e.g. turning something on). \"QUERY\" only reads it. Rules and schedules can only use ACTION commands."
                   },
                   "paramsSchema": {
                     "type": [
                       "object",
                       "null"
                     ],
-                    "additionalProperties": {}
+                    "additionalProperties": {},
+                    "description": "A JSON Schema describing what `params` a caller must send with this command. Leave null/omitted for a command that takes no arguments.",
+                    "example": {
+                      "type": "object",
+                      "properties": {
+                        "level": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 100
+                        }
+                      }
+                    }
                   },
                   "shape": {
                     "type": "string",
@@ -1740,17 +1970,36 @@
                       "SELECT",
                       "MULTI"
                     ],
-                    "default": "BUTTON"
+                    "default": "BUTTON",
+                    "description": "How the dashboard renders this command as a control, purely cosmetic, has no effect on validation."
                   },
                   "requiresApproval": {
                     "type": "boolean",
-                    "default": false
+                    "default": false,
+                    "description": "If true, calling this command never executes immediately, it always creates a pending approval (202 response) for an Owner/Admin to confirm first. Also means it can never be used in a rule or schedule, both fire unattended."
                   }
                 },
                 "required": [
                   "name",
                   "label"
                 ]
+              },
+              "example": {
+                "name": "SET_BRIGHTNESS",
+                "label": "Set brightness",
+                "kind": "ACTION",
+                "paramsSchema": {
+                  "type": "object",
+                  "properties": {
+                    "level": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 100
+                    }
+                  }
+                },
+                "shape": "NUMBER",
+                "requiresApproval": false
               }
             }
           }
@@ -1844,16 +2093,21 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 64,
-                    "pattern": "^[A-Z0-9_]+$"
+                    "pattern": "^[A-Z0-9_]+$",
+                    "description": "The exact string clients will pass as `cmd` when sending this command. SCREAMING_SNAKE_CASE, must be unique per device type.",
+                    "example": "SET_BRIGHTNESS"
                   },
                   "label": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 100
+                    "maxLength": 100,
+                    "description": "Human-readable label shown on the dashboard.",
+                    "example": "Set brightness"
                   },
                   "description": {
                     "type": "string",
-                    "maxLength": 500
+                    "maxLength": 500,
+                    "example": "Sets the light to a specific brightness level."
                   },
                   "kind": {
                     "type": "string",
@@ -1861,14 +2115,26 @@
                       "ACTION",
                       "QUERY"
                     ],
-                    "default": "ACTION"
+                    "default": "ACTION",
+                    "description": "\"ACTION\" changes device state (e.g. turning something on). \"QUERY\" only reads it. Rules and schedules can only use ACTION commands."
                   },
                   "paramsSchema": {
                     "type": [
                       "object",
                       "null"
                     ],
-                    "additionalProperties": {}
+                    "additionalProperties": {},
+                    "description": "A JSON Schema describing what `params` a caller must send with this command. Leave null/omitted for a command that takes no arguments.",
+                    "example": {
+                      "type": "object",
+                      "properties": {
+                        "level": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 100
+                        }
+                      }
+                    }
                   },
                   "shape": {
                     "type": "string",
@@ -1879,11 +2145,13 @@
                       "SELECT",
                       "MULTI"
                     ],
-                    "default": "BUTTON"
+                    "default": "BUTTON",
+                    "description": "How the dashboard renders this command as a control, purely cosmetic, has no effect on validation."
                   },
                   "requiresApproval": {
                     "type": "boolean",
-                    "default": false
+                    "default": false,
+                    "description": "If true, calling this command never executes immediately, it always creates a pending approval (202 response) for an Owner/Admin to confirm first. Also means it can never be used in a rule or schedule, both fire unattended."
                   }
                 }
               }
@@ -1990,7 +2258,7 @@
           "Device Control"
         ],
         "summary": "Send a command to a device",
-        "description": "The general-purpose command endpoint - validates the command and its params against the device's catalog, checks the caller's DeviceGrant, then either publishes it over MQTT immediately or (for a command marked `requiresApproval`) creates a pending approval instead of executing it. An API key needs a DeviceGrant covering this device and this command name - see the Authentication & Access guide.",
+        "description": "The general-purpose command endpoint - validates the command and its params against the device's catalog, checks the caller's DeviceGrant, then either publishes it over MQTT immediately or (for a command marked `requiresApproval`) creates a pending approval instead of executing it. An API key needs a DeviceGrant covering this device and this command name - see the Authentication & Access guide.\n\n**How to use this:** first call `GET /devices/{deviceId}/commands` to see exactly which `cmd` values this device accepts and what `params` (if any) each one expects, then send one of those `cmd` names here. A plain relay with no custom command catalog accepts `\"ON\"`, `\"OFF\"`, `\"TOGGLE\"`, and `\"STATUS\"` with no `params` at all.",
         "security": [
           {
             "apiKeyAuth": []
@@ -2013,19 +2281,53 @@
                   "cmd": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 64
+                    "maxLength": 64,
+                    "description": "A command name from this device's catalog - see GET /devices/{deviceId}/commands for the exact names this specific device accepts. Devices with no custom command catalog accept the legacy \"ON\"/\"OFF\"/\"TOGGLE\"/\"STATUS\" set.",
+                    "example": "ON"
                   },
                   "params": {
                     "type": "object",
-                    "additionalProperties": {}
+                    "additionalProperties": {},
+                    "description": "Only include this if the command you're sending declares a paramsSchema in its catalog entry (e.g. SET_BRIGHTNESS might expect { \"level\": 60 }). Omit entirely for a command that takes no arguments, like plain ON/OFF.",
+                    "example": {
+                      "level": 60
+                    }
                   },
                   "queuedAt": {
-                    "type": "number"
+                    "type": "number",
+                    "description": "Unix milliseconds. Optional - set this if your own app queued this command locally (e.g. while offline) before actually sending it, so Nexalware can reject it with COMMAND_EXPIRED if it sat for more than 5 minutes, instead of firing a stale command late. Omit it for a command sent immediately - it is never required.",
+                    "example": 1732000000000
+                  },
+                  "target": {
+                    "type": "string",
+                    "description": "Only set this if this device is a \"master\" orchestrating other physical devices locally (see the Device Orchestration docs) and you want to command one specific sub-device instead of the master itself. Omit for a normal command aimed at this device.",
+                    "example": "sub_x1y2z3"
                   }
                 },
                 "required": [
                   "cmd"
                 ]
+              },
+              "examples": {
+                "Simple command, no params": {
+                  "value": {
+                    "cmd": "ON"
+                  }
+                },
+                "Command with params": {
+                  "value": {
+                    "cmd": "SET_BRIGHTNESS",
+                    "params": {
+                      "level": 60
+                    }
+                  }
+                },
+                "Command aimed at a sub-device behind this device": {
+                  "value": {
+                    "cmd": "OPEN",
+                    "target": "sub_x1y2z3"
+                  }
+                }
               }
             }
           }
@@ -2672,7 +2974,7 @@
           "Device Control"
         ],
         "summary": "Read a device's telemetry history",
-        "description": "Time-series readings this device has reported what an AI agent needs to learn patterns rather than only react to the latest value.",
+        "description": "Time-series readings this device has reported, newest first, what an AI agent needs to learn patterns rather than only react to the latest value.\n\n**Example:** `GET /devices/dev_a1b2c3/telemetry?metric=temperature&limit=50` returns the last 50 temperature readings. Omit `metric` to get every metric this device reports, mixed together in one list.",
         "security": [
           {
             "apiKeyAuth": []
@@ -2694,33 +2996,42 @@
           },
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Only return readings for this metric name, omit to get every metric this device reports.",
+              "example": "temperature"
             },
             "required": false,
             "name": "metric",
-            "in": "query"
+            "in": "query",
+            "example": "temperature"
           },
           {
             "schema": {
               "type": "integer",
               "minimum": 1,
               "maximum": 1000,
-              "default": 100
+              "default": 100,
+              "description": "Max rows to return, 1-1000. Defaults to 100.",
+              "example": 50
             },
             "required": false,
             "name": "limit",
-            "in": "query"
+            "in": "query",
+            "example": 50
           },
           {
             "schema": {
               "type": [
                 "integer",
                 "null"
-              ]
+              ],
+              "description": "Unix milliseconds - only return readings recorded at or after this time. Omit for no lower bound.",
+              "example": 1732000000000
             },
             "required": false,
             "name": "since",
-            "in": "query"
+            "in": "query",
+            "example": 1732000000000
           }
         ],
         "responses": {
@@ -2733,7 +3044,23 @@
                   "items": {
                     "$ref": "#/components/schemas/TelemetryReading"
                   }
-                }
+                },
+                "example": [
+                  {
+                    "metric": "temperature",
+                    "value": 21.4,
+                    "valueText": null,
+                    "unit": "celsius",
+                    "recordedAt": "2024-11-19T10:00:00.000Z"
+                  },
+                  {
+                    "metric": "temperature",
+                    "value": 21.6,
+                    "valueText": null,
+                    "unit": "celsius",
+                    "recordedAt": "2024-11-19T10:05:00.000Z"
+                  }
+                ]
               }
             }
           },
@@ -2766,7 +3093,7 @@
           "Device Control"
         ],
         "summary": "Read the most recent value per telemetry metric",
-        "description": "The quickest \"current state\" snapshot - one row per metric this device has ever reported, plus its relay state.",
+        "description": "The quickest \"current state\" snapshot - one row per metric this device has ever reported, plus its relay state. Use this instead of `/telemetry` when you just need \"what is this device's situation right now\", not history.",
         "security": [
           {
             "apiKeyAuth": []
@@ -2795,12 +3122,15 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "state": {},
+                    "state": {
+                      "description": "The device's free-form current-state snapshot, whatever shape its firmware last published, or null if it never has."
+                    },
                     "relayState": {
                       "type": [
                         "boolean",
                         "null"
-                      ]
+                      ],
+                      "description": "Legacy ON/OFF relay state, null for devices that don't use the simple relay model."
                     },
                     "telemetry": {
                       "type": "array",
@@ -2812,6 +3142,22 @@
                   "required": [
                     "relayState",
                     "telemetry"
+                  ]
+                },
+                "example": {
+                  "state": {
+                    "relay": "ON",
+                    "brightness": 80
+                  },
+                  "relayState": true,
+                  "telemetry": [
+                    {
+                      "metric": "temperature",
+                      "value": 21.4,
+                      "valueText": null,
+                      "unit": "celsius",
+                      "recordedAt": "2024-11-19T10:05:00.000Z"
+                    }
                   ]
                 }
               }
@@ -2846,7 +3192,7 @@
           "Device Control"
         ],
         "summary": "List supported hardware boards",
-        "description": "Static reference data no authentication required. Used to populate the \"board type\" picker when registering a device.",
+        "description": "Static reference data no authentication required. Used to populate the \"board type\" picker when registering a device - `boardType` in POST /devices/register is free text, this is just suggestions, not an enforced list.",
         "responses": {
           "200": {
             "description": "OK",
@@ -2857,7 +3203,14 @@
                   "items": {
                     "$ref": "#/components/schemas/Board"
                   }
-                }
+                },
+                "example": [
+                  {
+                    "id": "esp32",
+                    "name": "ESP32",
+                    "description": "Wi-Fi + Bluetooth, the most common choice."
+                  }
+                ]
               }
             }
           }
@@ -2870,7 +3223,7 @@
           "Device Control"
         ],
         "summary": "List supported application/industry categories",
-        "description": "Static reference data no authentication required.",
+        "description": "Static reference data no authentication required. Same idea as /catalog/boards, but for `appType` when registering a device.",
         "responses": {
           "200": {
             "description": "OK",
@@ -2881,7 +3234,13 @@
                   "items": {
                     "$ref": "#/components/schemas/App"
                   }
-                }
+                },
+                "example": [
+                  {
+                    "id": "home-automation",
+                    "name": "Home Automation"
+                  }
+                ]
               }
             }
           }
@@ -2894,9 +3253,13 @@
           "Schedules"
         ],
         "summary": "List a device's active schedules",
+        "description": "Schedules that are PENDING (created, not due yet) or ACTIVE (currently running). For schedules that already finished or were cancelled, see GET .../schedules/history instead.",
         "security": [
           {
             "sessionAuth": []
+          },
+          {
+            "apiKeyAuth": []
           }
         ],
         "parameters": [
@@ -2921,7 +3284,25 @@
                   "items": {
                     "$ref": "#/components/schemas/Schedule"
                   }
-                }
+                },
+                "example": [
+                  {
+                    "scheduleId": "sched_a1b2c3",
+                    "deviceId": "dev_a1b2c3",
+                    "slot": 0,
+                    "onTs": 1732003600,
+                    "offTs": 1732032400,
+                    "label": "Morning",
+                    "enabled": true,
+                    "status": "PENDING",
+                    "onCommand": {
+                      "command": "ON"
+                    },
+                    "offCommand": {
+                      "command": "OFF"
+                    }
+                  }
+                ]
               }
             }
           },
@@ -2942,10 +3323,13 @@
           "Schedules"
         ],
         "summary": "Create or replace a schedule slot",
-        "description": "A device has up to 5 slots (0-4). `onCommand`/`offCommand` default to plain ON/OFF; any other command still fires reliably from the server at the scheduled time, but only the plain ON/OFF case also syncs to firmware for offline self-execution.",
+        "description": "A device has up to 5 slots (0-4). `onCommand`/`offCommand` default to plain ON/OFF; any other command still fires reliably from the server at the scheduled time, but only the plain ON/OFF case also syncs to firmware for offline self-execution. An API key needs a DeviceGrant covering both commands used, exactly like sending them directly with POST .../command.",
         "security": [
           {
             "sessionAuth": []
+          },
+          {
+            "apiKeyAuth": []
           }
         ],
         "parameters": [
@@ -2969,20 +3353,28 @@
                   "slot": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 4
+                    "maximum": 4,
+                    "description": "Which of the device's 5 schedule slots (0-4) to use. Creating a schedule in an already-used slot replaces it.",
+                    "example": 0
                   },
                   "onTs": {
                     "type": "integer",
-                    "minimum": 0
+                    "minimum": 0,
+                    "description": "Unix seconds - when to fire onCommand.",
+                    "example": 1732003600
                   },
                   "offTs": {
                     "type": "integer",
-                    "exclusiveMinimum": 0
+                    "exclusiveMinimum": 0,
+                    "description": "Unix seconds - when to fire offCommand.",
+                    "example": 1732032400
                   },
                   "label": {
                     "type": "string",
                     "maxLength": 7,
-                    "default": ""
+                    "default": "",
+                    "description": "Short label shown on the dashboard, max 7 characters.",
+                    "example": "Morning"
                   },
                   "enabled": {
                     "type": "boolean",
@@ -3003,7 +3395,8 @@
                     },
                     "required": [
                       "command"
-                    ]
+                    ],
+                    "description": "Defaults to { command: \"ON\" } if omitted. Must be a command from the device's catalog (see GET /devices/{deviceId}/commands) that does not require approval."
                   },
                   "offCommand": {
                     "type": "object",
@@ -3020,7 +3413,8 @@
                     },
                     "required": [
                       "command"
-                    ]
+                    ],
+                    "description": "Defaults to { command: \"OFF\" } if omitted. Same rules as onCommand."
                   }
                 },
                 "required": [
@@ -3028,6 +3422,30 @@
                   "onTs",
                   "offTs"
                 ]
+              },
+              "examples": {
+                "Plain ON/OFF (defaults)": {
+                  "value": {
+                    "slot": 0,
+                    "onTs": 1732003600,
+                    "offTs": 1732032400,
+                    "label": "Morning"
+                  }
+                },
+                "Custom commands": {
+                  "value": {
+                    "slot": 1,
+                    "onTs": 1732003600,
+                    "offTs": 1732032400,
+                    "label": "Cycle",
+                    "onCommand": {
+                      "command": "OPEN"
+                    },
+                    "offCommand": {
+                      "command": "CLOSE"
+                    }
+                  }
+                }
               }
             }
           }
@@ -3039,6 +3457,22 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Schedule"
+                },
+                "example": {
+                  "scheduleId": "sched_a1b2c3",
+                  "deviceId": "dev_a1b2c3",
+                  "slot": 0,
+                  "onTs": 1732003600,
+                  "offTs": 1732032400,
+                  "label": "Morning",
+                  "enabled": true,
+                  "status": "PENDING",
+                  "onCommand": {
+                    "command": "ON"
+                  },
+                  "offCommand": {
+                    "command": "OFF"
+                  }
                 }
               }
             }
@@ -3082,9 +3516,13 @@
           "Schedules"
         ],
         "summary": "Get the command choices available for scheduling",
+        "description": "The same command catalog GET /devices/{deviceId}/commands returns, filtered to commands a schedule can actually use (kind ACTION only, a schedule can't \"run\" a QUERY command). Use this to populate a command picker before calling POST .../schedules.",
         "security": [
           {
             "sessionAuth": []
+          },
+          {
+            "apiKeyAuth": []
           }
         ],
         "parameters": [
@@ -3115,6 +3553,16 @@
                   "required": [
                     "commands"
                   ]
+                },
+                "example": {
+                  "commands": [
+                    {
+                      "commandId": null,
+                      "name": "ON",
+                      "label": "Turn on",
+                      "paramsSchema": null
+                    }
+                  ]
                 }
               }
             }
@@ -3138,9 +3586,13 @@
           "Schedules"
         ],
         "summary": "Update a schedule slot",
+        "description": "Only the fields provided are changed, everything else on the existing schedule stays as-is.",
         "security": [
           {
             "sessionAuth": []
+          },
+          {
+            "apiKeyAuth": []
           }
         ],
         "parameters": [
@@ -3176,11 +3628,15 @@
                 "properties": {
                   "onTs": {
                     "type": "integer",
-                    "minimum": 0
+                    "minimum": 0,
+                    "description": "Unix seconds. Omit to leave unchanged.",
+                    "example": 1732003600
                   },
                   "offTs": {
                     "type": "integer",
-                    "exclusiveMinimum": 0
+                    "exclusiveMinimum": 0,
+                    "description": "Unix seconds. Omit to leave unchanged.",
+                    "example": 1732032400
                   },
                   "label": {
                     "type": "string",
@@ -3218,6 +3674,9 @@
                     ]
                   }
                 }
+              },
+              "example": {
+                "enabled": false
               }
             }
           }
@@ -3229,12 +3688,38 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Schedule"
+                },
+                "example": {
+                  "scheduleId": "sched_a1b2c3",
+                  "deviceId": "dev_a1b2c3",
+                  "slot": 0,
+                  "onTs": 1732003600,
+                  "offTs": 1732032400,
+                  "label": "Morning",
+                  "enabled": true,
+                  "status": "PENDING",
+                  "onCommand": {
+                    "command": "ON"
+                  },
+                  "offCommand": {
+                    "command": "OFF"
+                  }
                 }
               }
             }
           },
           "400": {
             "description": "Invalid request body or parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not permitted - see `message` for the specific reason and how to fix it",
             "content": {
               "application/json": {
                 "schema": {
@@ -3263,6 +3748,9 @@
         "security": [
           {
             "sessionAuth": []
+          },
+          {
+            "apiKeyAuth": []
           }
         ],
         "parameters": [
@@ -3312,6 +3800,16 @@
               }
             }
           },
+          "403": {
+            "description": "Not permitted - see `message` for the specific reason and how to fix it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
             "content": {
@@ -3331,9 +3829,13 @@
           "Schedules"
         ],
         "summary": "List completed/cancelled schedules",
+        "description": "Most recent first, capped at the last 50.",
         "security": [
           {
             "sessionAuth": []
+          },
+          {
+            "apiKeyAuth": []
           }
         ],
         "parameters": [
@@ -3358,7 +3860,25 @@
                   "items": {
                     "$ref": "#/components/schemas/Schedule"
                   }
-                }
+                },
+                "example": [
+                  {
+                    "scheduleId": "sched_a1b2c3",
+                    "deviceId": "dev_a1b2c3",
+                    "slot": 0,
+                    "onTs": 1732003600,
+                    "offTs": 1732032400,
+                    "label": "Morning",
+                    "enabled": true,
+                    "status": "COMPLETED",
+                    "onCommand": {
+                      "command": "ON"
+                    },
+                    "offCommand": {
+                      "command": "OFF"
+                    }
+                  }
+                ]
               }
             }
           },
@@ -3429,7 +3949,7 @@
           "Rules"
         ],
         "summary": "Create a rule",
-        "description": "A rule condition can only reference a telemetry metric this device has already reported at least once. The action command is checked the same way an unattended schedule action is - commands marked `requiresApproval` cannot be used here.",
+        "description": "Runs continuously: whenever a matching telemetry point arrives, every condition is checked (all must pass), and if they do, `action` fires automatically, no human involved. A rule condition can only reference a telemetry metric this device has already reported at least once - check GET .../rules/context first. The action command is checked the same way an unattended schedule action is - commands marked `requiresApproval` cannot be used here.",
         "security": [
           {
             "sessionAuth": []
@@ -3523,6 +4043,20 @@
                   "conditions",
                   "action"
                 ]
+              },
+              "example": {
+                "name": "Cool down when hot",
+                "enabled": true,
+                "conditions": [
+                  {
+                    "metric": "temperature",
+                    "comparator": ">",
+                    "value": 28
+                  }
+                ],
+                "action": {
+                  "command": "ON"
+                }
               }
             }
           }
@@ -3534,6 +4068,24 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Rule"
+                },
+                "example": {
+                  "ruleId": "rul_x1y2z3",
+                  "deviceId": "dev_a1b2c3",
+                  "name": "Cool down when hot",
+                  "enabled": true,
+                  "priority": 0,
+                  "conditions": [
+                    {
+                      "metric": "temperature",
+                      "comparator": ">",
+                      "value": 28
+                    }
+                  ],
+                  "action": {
+                    "command": "ON"
+                  },
+                  "lastMatched": false
                 }
               }
             }
@@ -3567,6 +4119,7 @@
           "Rules"
         ],
         "summary": "Get the metrics and commands available for building a rule",
+        "description": "The telemetry metrics this device has actually reported (only these can be used in a condition) and its command catalog (only ACTION commands not marked requiresApproval can be used as the rule's action). Use this to populate a rule builder UI before calling POST .../rules.",
         "security": [
           {
             "sessionAuth": []
@@ -3606,6 +4159,19 @@
                   "required": [
                     "metrics",
                     "commands"
+                  ]
+                },
+                "example": {
+                  "metrics": [
+                    "temperature"
+                  ],
+                  "commands": [
+                    {
+                      "name": "ON"
+                    },
+                    {
+                      "name": "OFF"
+                    }
                   ]
                 }
               }
@@ -3840,7 +4406,7 @@
           "Grants"
         ],
         "summary": "List a device's access grants",
-        "description": "Includes grants scoped directly to this device and grants scoped to its whole project both apply.",
+        "description": "Includes grants scoped directly to this device, grants scoped to its whole project, and grants scoped to one sub-device behind it - all three apply.",
         "security": [
           {
             "sessionAuth": []
@@ -3868,7 +4434,28 @@
                   "items": {
                     "$ref": "#/components/schemas/DeviceGrant"
                   }
-                }
+                },
+                "example": [
+                  {
+                    "grantId": "grt_x1y2z3",
+                    "appliesVia": "device",
+                    "subDevice": null,
+                    "commands": [
+                      "ON",
+                      "OFF"
+                    ],
+                    "scope": "WRITE",
+                    "expiresAt": null,
+                    "activeDays": [],
+                    "activeFromMinute": null,
+                    "activeToMinute": null,
+                    "rateLimitPerMinute": null,
+                    "createdAt": "2024-11-01T09:00:00.000Z",
+                    "subject": {
+                      "type": "apikey"
+                    }
+                  }
+                ]
               }
             }
           },
@@ -3889,7 +4476,7 @@
           "Grants"
         ],
         "summary": "Grant an API key or team member access to a device",
-        "description": "This is how an API key gets permission to call device commands it has none by default. Provide exactly one of `apiKeyId` or `membershipId`. Requires an Owner or Admin session; API keys cannot create grants for themselves or anyone else.",
+        "description": "This is how an API key gets permission to call device commands it has none by default. Provide exactly one of `apiKeyId` or `membershipId`. Add `subDeviceId` to narrow the grant to one sub-device behind this device (an orchestrator \"master\") instead of the whole device - omit it to reach every sub-device behind the device, same as today. Requires an Owner or Admin session; API keys cannot create grants for themselves or anyone else.",
         "security": [
           {
             "sessionAuth": []
@@ -3914,10 +4501,19 @@
                 "type": "object",
                 "properties": {
                   "apiKeyId": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Grant an API key access. Provide exactly one of apiKeyId or membershipId, never both.",
+                    "example": "key_x1y2z3"
                   },
                   "membershipId": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Grant a team member access (rarely needed - Owners/Admins already have full access, this is for scoping a Member/Viewer). Provide exactly one of apiKeyId or membershipId.",
+                    "example": "mem_x1y2z3"
+                  },
+                  "subDeviceId": {
+                    "type": "string",
+                    "description": "Narrow the grant to one sub-device behind this device instead of the whole device. Omit to reach every sub-device behind it too.",
+                    "example": "sub_x1y2z3"
                   },
                   "commands": {
                     "type": "array",
@@ -3926,7 +4522,12 @@
                       "minLength": 1,
                       "maxLength": 64
                     },
-                    "minItems": 1
+                    "minItems": 1,
+                    "description": "Which command names this grant allows, matching the names from GET /devices/{deviceId}/commands. Use [\"*\"] to allow every command.",
+                    "example": [
+                      "ON",
+                      "OFF"
+                    ]
                   },
                   "scope": {
                     "type": "string",
@@ -3935,14 +4536,17 @@
                       "WRITE",
                       "FULL"
                     ],
-                    "default": "WRITE"
+                    "default": "WRITE",
+                    "description": "READ = can read state/telemetry only, ACTION commands are rejected even if listed. WRITE = can also send the listed ACTION commands. FULL = WRITE plus dashboard-adjacent reads. Most integrations want WRITE."
                   },
                   "expiresAt": {
                     "type": [
                       "string",
                       "null"
                     ],
-                    "format": "date-time"
+                    "format": "date-time",
+                    "description": "ISO 8601. Omit or null for a grant that never expires.",
+                    "example": "2025-01-01T00:00:00.000Z"
                   },
                   "activeDays": {
                     "type": "array",
@@ -3951,7 +4555,15 @@
                       "minimum": 0,
                       "maximum": 6
                     },
-                    "maxItems": 7
+                    "maxItems": 7,
+                    "description": "0 = Sunday ... 6 = Saturday. Omit for every day.",
+                    "example": [
+                      1,
+                      2,
+                      3,
+                      4,
+                      5
+                    ]
                   },
                   "activeFromMinute": {
                     "type": [
@@ -3959,7 +4571,9 @@
                       "null"
                     ],
                     "minimum": 0,
-                    "maximum": 1439
+                    "maximum": 1439,
+                    "description": "Minutes since midnight UTC (480 = 8:00 AM). Pair with activeToMinute for a time-of-day window, e.g. business hours only.",
+                    "example": 480
                   },
                   "activeToMinute": {
                     "type": [
@@ -3967,7 +4581,9 @@
                       "null"
                     ],
                     "minimum": 0,
-                    "maximum": 1439
+                    "maximum": 1439,
+                    "description": "Minutes since midnight UTC (1080 = 6:00 PM).",
+                    "example": 1080
                   },
                   "rateLimitPerMinute": {
                     "type": [
@@ -3975,12 +4591,22 @@
                       "null"
                     ],
                     "minimum": 1,
-                    "maximum": 1000
+                    "maximum": 1000,
+                    "description": "Max commands per minute this grant allows. Omit for no extra limit beyond the account's own.",
+                    "example": 60
                   }
                 },
                 "required": [
                   "commands"
                 ]
+              },
+              "example": {
+                "apiKeyId": "key_x1y2z3",
+                "commands": [
+                  "ON",
+                  "OFF"
+                ],
+                "scope": "WRITE"
               }
             }
           }
@@ -4000,6 +4626,9 @@
                   "required": [
                     "grantId"
                   ]
+                },
+                "example": {
+                  "grantId": "grt_x1y2z3"
                 }
               }
             }
@@ -4245,6 +4874,7 @@
           "API Keys"
         ],
         "summary": "List your account's API keys",
+        "description": "Never includes the raw secret, only `prefix` (e.g. `nxw_live_sk_ab12`) to help you tell keys apart, the full value is shown exactly once, at creation.",
         "security": [
           {
             "sessionAuth": []
@@ -4260,7 +4890,18 @@
                   "items": {
                     "$ref": "#/components/schemas/ApiKey"
                   }
-                }
+                },
+                "example": [
+                  {
+                    "keyId": "key_x1y2z3",
+                    "name": "Production agent",
+                    "type": "SECRET",
+                    "prefix": "nxw_live_sk_ab12",
+                    "enabled": true,
+                    "lastUsedAt": "2024-11-19T10:05:00.000Z",
+                    "createdAt": "2024-11-01T09:00:00.000Z"
+                  }
+                ]
               }
             }
           },
@@ -4281,7 +4922,7 @@
           "API Keys"
         ],
         "summary": "Create an API key",
-        "description": "The raw key is returned once, at creation only, and cannot be recovered afterward. A new key can call nothing until a DeviceGrant is created for it (see the Grants endpoints).",
+        "description": "The raw key is returned once, at creation only, and cannot be recovered afterward. A new key can call nothing until a DeviceGrant is created for it (see the Grants endpoints).\n\n**Next step:** copy the `key` value from the response (starts with `nxw_live_sk_`), then call POST /devices/{deviceId}/grants with this key's `keyId` to actually let it do something.",
         "security": [
           {
             "sessionAuth": []
@@ -4302,6 +4943,9 @@
                 "required": [
                   "name"
                 ]
+              },
+              "example": {
+                "name": "Production agent"
               }
             }
           }
@@ -4336,6 +4980,12 @@
                     "type",
                     "key"
                   ]
+                },
+                "example": {
+                  "keyId": "key_x1y2z3",
+                  "name": "Production agent",
+                  "type": "SECRET",
+                  "key": "nxw_live_sk_abcdef0123456789..."
                 }
               }
             }
@@ -4583,7 +5233,18 @@
                   "items": {
                     "$ref": "#/components/schemas/Webhook"
                   }
-                }
+                },
+                "example": [
+                  {
+                    "webhookId": "whk_x1y2z3",
+                    "keyId": "key_x1y2z3",
+                    "url": "https://your-server.com/webhooks/nexalware",
+                    "secretPrefix": "whsec_ab12",
+                    "enabled": true,
+                    "createdAt": "2024-11-01T09:00:00.000Z",
+                    "updatedAt": "2024-11-01T09:00:00.000Z"
+                  }
+                ]
               }
             }
           },
@@ -4615,6 +5276,10 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/CreateWebhookBody"
+              },
+              "example": {
+                "keyId": "key_x1y2z3",
+                "url": "https://your-server.com/webhooks/nexalware"
               }
             }
           }
@@ -4646,6 +5311,12 @@
                     "url",
                     "secret"
                   ]
+                },
+                "example": {
+                  "webhookId": "whk_x1y2z3",
+                  "keyId": "key_x1y2z3",
+                  "url": "https://your-server.com/webhooks/nexalware",
+                  "secret": "whsec_abcdef0123456789..."
                 }
               }
             }
@@ -4922,6 +5593,7 @@
           "Events"
         ],
         "summary": "List recent events across your whole account",
+        "description": "A paginated audit log across every device you own - device online/offline, commands sent, unauthorized attempts, schedule changes. Use `cursor` from a previous response to page further back.",
         "security": [
           {
             "sessionAuth": []
@@ -4982,6 +5654,22 @@
                     "hasMore",
                     "cursor"
                   ]
+                },
+                "example": {
+                  "data": [
+                    {
+                      "id": "evt_x1y2z3",
+                      "deviceId": "dev_a1b2c3",
+                      "deviceName": "Garage Light",
+                      "eventType": "COMMAND_SENT",
+                      "description": "Command \"ON\" sent via API key",
+                      "timestamp": 1732000000000,
+                      "source": "apikey"
+                    }
+                  ],
+                  "total": 1,
+                  "hasMore": false,
+                  "cursor": null
                 }
               }
             }
@@ -5005,6 +5693,7 @@
           "Events"
         ],
         "summary": "List a single device's audit log",
+        "description": "Same event log as GET /events, scoped to one device. Use `before` (an event id from a previous response) to page further back.",
         "security": [
           {
             "sessionAuth": []
@@ -5103,7 +5792,18 @@
                   "items": {
                     "$ref": "#/components/schemas/CommandApproval"
                   }
-                }
+                },
+                "example": [
+                  {
+                    "approvalId": "apv_x1y2z3",
+                    "deviceId": "dev_a1b2c3",
+                    "cmd": "UNLOCK",
+                    "params": null,
+                    "status": "PENDING",
+                    "createdAt": "2024-11-19T10:00:00.000Z",
+                    "expiresAt": "2024-11-20T10:00:00.000Z"
+                  }
+                ]
               }
             }
           },
@@ -5275,6 +5975,321 @@
           },
           "409": {
             "description": "Conflict with current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{deviceId}/sub-devices": {
+      "get": {
+        "tags": [
+          "Sub-Devices"
+        ],
+        "summary": "List the sub-devices connected behind this device",
+        "description": "A device can act as an orchestrator (\"master\") for other physical devices connected to it locally (Bluetooth, WiFi) rather than directly to Nexalware - this lists everything reported behind it. Empty until the master actually reports a sub-device, see the [Device Orchestration](/docs/device-orchestration) docs for how a master does that. See [Receiving Webhooks](/docs/reference/receiving-webhooks) for the equivalent live-event story, sub-device events ride the same WebSocket feed and webhook pipeline device events already use.",
+        "security": [
+          {
+            "sessionAuth": []
+          },
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "dev_a1b2c3"
+            },
+            "required": true,
+            "name": "deviceId",
+            "in": "path",
+            "example": "dev_a1b2c3"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SubDevice"
+                  }
+                },
+                "example": [
+                  {
+                    "subDeviceId": "sub_x1y2z3",
+                    "externalId": "relay-1",
+                    "name": "Garage Light",
+                    "state": {
+                      "relay": "ON"
+                    },
+                    "capabilities": {
+                      "commands": [
+                        {
+                          "name": "ON"
+                        },
+                        {
+                          "name": "OFF"
+                        }
+                      ],
+                      "telemetry_metrics": [
+                        "power_draw"
+                      ],
+                      "verifiable": false
+                    },
+                    "verifiable": false,
+                    "enabled": true,
+                    "isOnline": true,
+                    "lastSeen": "2024-11-19T10:05:00.000Z",
+                    "createdAt": "2024-11-01T09:00:00.000Z"
+                  }
+                ]
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{deviceId}/sub-devices/{subDeviceId}": {
+      "get": {
+        "tags": [
+          "Sub-Devices"
+        ],
+        "summary": "Read one sub-device",
+        "security": [
+          {
+            "sessionAuth": []
+          },
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "dev_a1b2c3"
+            },
+            "required": true,
+            "name": "deviceId",
+            "in": "path",
+            "example": "dev_a1b2c3"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "sub_x1y2z3"
+            },
+            "required": true,
+            "name": "subDeviceId",
+            "in": "path",
+            "example": "sub_x1y2z3"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubDevice"
+                },
+                "example": {
+                  "subDeviceId": "sub_x1y2z3",
+                  "externalId": "relay-1",
+                  "name": "Garage Light",
+                  "state": {
+                    "relay": "ON"
+                  },
+                  "capabilities": {
+                    "commands": [
+                      {
+                        "name": "ON"
+                      },
+                      {
+                        "name": "OFF"
+                      }
+                    ],
+                    "telemetry_metrics": [
+                      "power_draw"
+                    ],
+                    "verifiable": false
+                  },
+                  "verifiable": false,
+                  "enabled": true,
+                  "isOnline": true,
+                  "lastSeen": "2024-11-19T10:05:00.000Z",
+                  "createdAt": "2024-11-01T09:00:00.000Z"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{deviceId}/sub-devices/{subDeviceId}/telemetry": {
+      "get": {
+        "tags": [
+          "Sub-Devices"
+        ],
+        "summary": "Read a sub-device's telemetry history",
+        "security": [
+          {
+            "sessionAuth": []
+          },
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "dev_a1b2c3"
+            },
+            "required": true,
+            "name": "deviceId",
+            "in": "path",
+            "example": "dev_a1b2c3"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "sub_x1y2z3"
+            },
+            "required": true,
+            "name": "subDeviceId",
+            "in": "path",
+            "example": "sub_x1y2z3"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only return readings for this metric name, omit to get every metric this sub-device reports.",
+              "example": "power_draw"
+            },
+            "required": false,
+            "name": "metric",
+            "in": "query",
+            "example": "power_draw"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 100,
+              "description": "Max rows to return, 1-1000. Defaults to 100.",
+              "example": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query",
+            "example": 50
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Unix milliseconds - only return readings recorded at or after this time.",
+              "example": 1732000000000
+            },
+            "required": false,
+            "name": "since",
+            "in": "query",
+            "example": 1732000000000
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "metric": {
+                        "type": "string"
+                      },
+                      "value": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "valueText": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "unit": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "recordedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    },
+                    "required": [
+                      "metric",
+                      "value",
+                      "valueText",
+                      "unit",
+                      "recordedAt"
+                    ]
+                  }
+                },
+                "example": [
+                  {
+                    "metric": "power_draw",
+                    "value": 4.2,
+                    "valueText": null,
+                    "unit": "watts",
+                    "recordedAt": "2024-11-19T10:05:00.000Z"
+                  }
+                ]
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {

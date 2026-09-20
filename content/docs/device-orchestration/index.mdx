@@ -1,0 +1,98 @@
+---
+title: Device Orchestration
+description: Build a single device (a "master") that coordinates a whole team of sub-devices connected to it locally.
+---
+
+Build a single device, a **"master"**, that coordinates a whole team of
+other physical devices connected to it locally, over WiFi or Bluetooth,
+no internet needed for them to talk to each other. The master talks to
+Nexalware exactly the way any device already does, its sub-devices never
+have to, only the master does.
+
+<Callout type="info" title="Sub-device, not AI agent">
+A sub-device is a physical device, not a software AI agent. It's just a
+device with enough intelligence, capabilities, state, permissions, and
+decision-making logic behind it to coordinate the devices connected to
+it. "AI agent" still means what it always meant on Nexalware: an app or
+piece of software (yours, or one you built with an LLM framework) that
+calls the Nexalware API to control physical devices. Building a master
+doesn't turn your devices into a software product, it makes one physical
+device smart enough to run a small team of other physical devices.
+</Callout>
+
+```text
+Your App / AI Agent
+        │
+        │ Nexalware API
+        ↓
+    Nexalware
+        │
+        │ MQTT (internet)
+        ↓
+   Master Device  ←──────────┐
+        │                    │
+        │ local WiFi/BLE     │ local WiFi/BLE
+        ↓                    ↓
+   Sub-Device A          Sub-Device B
+```
+
+A master is a normal device. You register it and connect it exactly like
+any other device (see the [MicroPython](/docs/micropython-reference) or
+[Arduino](/docs/arduino-reference) reference). Two things are new:
+
+1. Its status reports can list the sub-devices connected to it.
+2. Its commands can be aimed at one specific sub-device instead of the device itself.
+
+Nothing about a normal device changes. This is something extra a device
+can optionally do, not a different kind of device.
+
+## Why build it this way
+
+A sub-device, in this system, doesn't need to be smart on its own,
+doesn't need internet access, and doesn't need any Nexalware credentials
+at all. It only needs to speak one small, fixed set of messages (see
+[The Sub-Device Contract](/docs/device-orchestration/sub-device-contract))
+to whatever master it's connected to. Only the master needs to
+understand Nexalware. Anyone can build a sub-device, in any language, on
+any board, without ever touching Nexalware's API.
+
+## Read next
+
+- **[The Sub-Device Contract](/docs/device-orchestration/sub-device-contract)**,
+  start here if you're building a sub-device. The exact messages it needs to
+  send and receive.
+- **[Master Reference](/docs/device-orchestration/master-reference)**,
+  start here if you're building the master, the device that talks to
+  sub-devices locally and reports to Nexalware.
+
+## What Nexalware does and doesn't check
+
+Nexalware keeps a record of every sub-device a master reports: its
+identity, its current state, what it can do, and whether it's online.
+You can send it commands and read its history, the same as any device.
+
+What Nexalware does **not** do is check whether a command makes sense for
+a specific sub-device, the way it checks commands against a
+[DeviceType](/docs/concepts/devices-and-device-types) for a normal device.
+Nexalware can't know in advance what a sub-device actually does, so it
+just delivers the command. The master relays it. The sub-device decides
+what to do with it.
+
+## Access can be scoped to a single sub-device
+
+Normally, an [API key's access](/docs/concepts/authentication-and-access)
+is granted to a whole device. Now it can also be granted to one specific
+sub-device behind that device, without reaching anything else connected
+to it. If you don't set this, the key reaches every sub-device behind the
+device, the same as before, this is an extra option, not something you
+have to configure.
+
+## The rest of the platform already supports this
+
+The [WebSocket feed](/docs/reference/websocket) and
+[webhooks](/docs/reference/receiving-webhooks) already send sub-device
+events, `sub_device_state_changed`, `sub_device_telemetry`,
+`sub_device_online`, and `sub_device_offline`, the same way they already
+send device events. If your code already ignores event types it doesn't
+recognize (the usual advice on those pages), these new events will just
+start showing up, nothing else to change.

@@ -1,0 +1,240 @@
+---
+title: The Sub-Device Contract
+description: Every message a sub-device needs to send and receive, with exact fields, so you can build one in any language.
+---
+
+A sub-device is a physical device that connects to a [master](/docs/device-orchestration/master-reference)
+locally (WiFi or Bluetooth), instead of connecting to Nexalware directly.
+The sub-device never needs internet access and never needs to know
+Nexalware exists. It only needs to send and receive the messages on this
+page, to whichever master it's connected to.
+
+This page tells you exactly what those messages look like: every field,
+whether it's required, and what it means. If you're building a
+sub-device, this is the only page you need to build the connection.
+
+## The short version, before the details
+
+1. Your sub-device connects to the master (over WiFi or Bluetooth).
+2. Your sub-device sends `identify` and `describe`, once, right after connecting. This tells the master who your sub-device is and what it can do.
+3. Your sub-device sends `state` and `health` whenever something changes, so the master (and Nexalware) always has an up-to-date picture.
+4. The master sends your sub-device a `command` when someone wants it to do something.
+5. Your sub-device sends `result` back, saying whether it did it.
+
+That's the whole loop. Everything below is the exact shape of each message.
+
+## Every message has the same envelope
+
+Every message, in both directions, is a JSON object with a `type` field.
+The `type` field says which of the six operations this message is. Every
+other field depends on which one it is.
+
+```json
+{ "type": "state", "relay": "ON" }
+```
+
+Here, `type` is `"state"`, and `relay` is a field that belongs to the
+`state` message specifically. Keep this pattern in mind, every example
+below is a complete, real message you could send as-is.
+
+<Callout type="warn" title="Don't reuse the field name `type` for anything else">
+  Since `type` is already used to say which message this is, don't name any
+  of your own fields `type` too, inside the same message. If your sub-device
+  has a "device category" concept (relay, sensor, camera), call that field
+  something else, like `kind`, the examples below do exactly this.
+</Callout>
+
+## The six required messages
+
+### `identify`
+
+**Sent by:** your sub-device, once, immediately after connecting.
+**What it's for:** tells the master which sub-device this is.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `type` | string | yes | Always `"identify"`. |
+| `id` | string | yes | A unique, stable ID for this sub-device. Pick anything, as long as it never changes and no other sub-device behind the same master uses it. |
+| `name` | string | yes | A human-readable name, shown on the Nexalware dashboard. |
+| `kind` | string | no | What category of device this is (`"relay"`, `"sensor"`, `"camera"`, anything you want). Purely descriptive, Nexalware doesn't validate it. |
+| `version` | string | no | Your sub-device's own firmware/software version, useful for your own debugging later. |
+
+```json
+{ "type": "identify", "id": "relay-1", "name": "Garage Light", "kind": "relay", "version": "1.0.0" }
+```
+
+### `describe`
+
+**Sent by:** your sub-device, once, right after `identify`.
+**What it's for:** tells the master exactly what your sub-device can do, so nobody has to hardcode that knowledge anywhere else. This is the single most important message in the whole contract, read the callout below.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `type` | string | yes | Always `"describe"`. |
+| `commands` | array | yes | The list of commands this sub-device accepts. Can be an empty array `[]` if this sub-device only reports data and accepts no commands. |
+| `commands[].name` | string | yes | The command name, exactly as it will arrive in a `command` message's `cmd` field. |
+| `commands[].params_schema` | object | no | A [JSON Schema](https://json-schema.org/) describing the `params` this command expects. Omit it entirely if the command takes no params. |
+| `telemetry_metrics` | array of strings | no | The names of any metrics this sub-device reports through `state`, purely informational, for anyone reading the dashboard later. |
+| `verifiable` | boolean | no | `true` only if this sub-device can independently confirm a command actually happened (see `verify` below). Defaults to `false`, and `false` is a completely normal, honest answer, most sub-devices don't have this. |
+
+```json
+{
+  "type": "describe",
+  "commands": [
+    { "name": "ON" },
+    { "name": "OFF" },
+    {
+      "name": "SET_BRIGHTNESS",
+      "params_schema": {
+        "type": "object",
+        "properties": { "level": { "type": "number", "minimum": 0, "maximum": 100 } }
+      }
+    }
+  ],
+  "telemetry_metrics": ["power_draw"],
+  "verifiable": false
+}
+```
+
+<Callout type="info" title="Why this message exists">
+  Nexalware doesn't know in advance what your sub-device is, it could be a
+  relay, a robotic arm, a soil sensor, anything. Nobody hardcodes that
+  anywhere in the platform. Instead, your sub-device describes itself once, and
+  that description is what makes it work, automatically, with the rest of
+  Nexalware (the dashboard, the API, webhooks) without anyone writing
+  custom code for your specific sub-device.
+</Callout>
+
+### `state`
+
+**Sent by:** your sub-device, whenever something changes, plus occasionally even
+when nothing has (a heartbeat, so the master knows your sub-device is still
+there).
+**What it's for:** the sub-device's current snapshot, in whatever shape makes
+sense for what it does.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `type` | string | yes | Always `"state"`. |
+| *(anything else)* | any | no | Every other field is entirely up to you, this message has no fixed shape beyond `type`. Use whatever field names describe your sub-device's state. |
+
+```json
+{ "type": "state", "relay": "ON", "brightness": 80 }
+```
+
+### `health`
+
+**Sent by:** your sub-device, on whatever schedule makes sense, or whenever it changes.
+**What it's for:** whether the sub-device is working correctly, kept separate
+from `state` on purpose, a sub-device can be online and unhealthy at the same
+time (low battery, a sensor error), and that's a different fact than what
+its current reading is.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `type` | string | yes | Always `"health"`. |
+| `online` | boolean | yes | Whether the sub-device considers itself working right now. |
+| `battery` | number | no | Battery percentage, if this sub-device runs on one. |
+| `errors` | array of strings | no | Any current error conditions, empty array if none. |
+
+```json
+{ "type": "health", "online": true, "battery": 91, "errors": [] }
+```
+
+### `command`
+
+**Sent by:** the master, to your sub-device, whenever Nexalware (or the master's
+own local automation) wants your sub-device to do something.
+**What it's for:** the one message that flows the opposite direction from
+everything else on this page.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `type` | string | yes | Always `"command"`. |
+| `cmd` | string | yes | The command name, matches one of the `name` values your sub-device listed in `describe`. |
+| `params` | object | no | Only present if this command declared a `params_schema` in `describe`. |
+
+```json
+{ "type": "command", "cmd": "SET_BRIGHTNESS", "params": { "level": 60 } }
+```
+
+### `result`
+
+**Sent by:** your sub-device, right after it finishes handling a `command`.
+**What it's for:** telling the master what happened. Read the callout
+below before you rely on this for anything important, it's a claim your
+sub-device makes about itself, not independently checked.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `type` | string | yes | Always `"result"`. |
+| `cmd` | string | yes | Which command this result is for, matches the `cmd` you were just sent. |
+| `ok` | boolean | yes | Whether it succeeded. |
+| `error` | string | no | Only present when `ok` is `false`, a short reason why. |
+
+```json title="Success"
+{ "type": "result", "cmd": "SET_BRIGHTNESS", "ok": true }
+```
+
+```json title="Failure"
+{ "type": "result", "cmd": "SET_BRIGHTNESS", "ok": false, "error": "motor jammed" }
+```
+
+## The one optional message
+
+### `verify`
+
+**Sent by:** the master, to your sub-device, right after a `command`, only if
+your sub-device declared `verifiable: true` in `describe`.
+**What it's for:** sub-devices with real hardware to independently double-check
+a command (a current sensor confirming a relay really switched, a limit
+switch confirming a gate really closed) can prove it actually happened,
+instead of just reporting that the code ran.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `type` | string | yes | Always `"verify"`. |
+| `cmd` | string | yes | Which command to verify. |
+
+Your sub-device responds with:
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `type` | string | yes | Always `"verify"`. |
+| `cmd` | string | yes | Echoes back which command this answers. |
+| `confirmed` | boolean | yes | Whether independent hardware actually confirmed the effect. |
+
+```json title="Master asks"
+{ "type": "verify", "cmd": "SET_BRIGHTNESS" }
+```
+
+```json title="Sub-device answers"
+{ "type": "verify", "cmd": "SET_BRIGHTNESS", "confirmed": true }
+```
+
+Only implement this if you truly have independent hardware for it. If you
+don't declare `verifiable: true`, the master never sends `verify`, and
+that's completely fine, most sub-devices work this way.
+
+<Callout type="warn" title="Result is a claim, verify is proof">
+  Your sub-device's own `result` message comes from the same code that just ran
+  the command, so it can never be independent proof that something
+  physically happened, only a report that the code believes it did. If
+  that distinction matters for what your sub-device controls (a lock, a gate,
+  anything with real consequences if it's wrong), implement `verify` with
+  real, separate hardware. If it doesn't matter, `result` alone is fine,
+  that's the normal case.
+</Callout>
+
+## Where this data ends up on Nexalware
+
+Everything your sub-device sends becomes visible through Nexalware without you
+doing anything else:
+
+- Your `identify` and `describe` show up at `GET /devices/{deviceId}/sub-devices/{subDeviceId}`.
+- Your `state` and `health` updates show up there too, and live, over the [WebSocket feed](/docs/reference/websocket) and [webhooks](/docs/reference/receiving-webhooks), as `sub_device_state_changed` and `sub_device_telemetry` events.
+- Every `command`/`result` pair is kept as history, visible from the dashboard's Devices page, under the Sub-Devices tab.
+
+Your sub-device doesn't call any of this directly, the [master](/docs/device-orchestration/master-reference)
+handles the connection to Nexalware. Your sub-device only ever talks to the
+master, using the messages on this page.

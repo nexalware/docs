@@ -1,0 +1,6 @@
+{
+  "title": "SDK & MCP",
+  "description": "Call Nexalware directly from your own code, or let an MCP-aware agent host discover it as tools automatically.",
+  "icon": "Terminal",
+  "pages": ["index", "sdk", "sdk-python", "mcp-server"]
+}

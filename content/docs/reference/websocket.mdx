@@ -123,6 +123,38 @@ and dispatches its command.
 }
 ```
 
+### `sub_device_state_changed` / `sub_device_telemetry` / `sub_device_online` / `sub_device_offline`
+
+Sent when a device acting as an orchestrator (a "master", see
+[Device Orchestration](/docs/device-orchestration)) reports on a sub-device connected
+behind it, same idea as the device-level events above, one level deeper.
+
+```json
+{
+  "type": "sub_device_state_changed",
+  "deviceId": "dev_a1b2c3",
+  "accountId": "acc_x1y2z3",
+  "subDeviceId": "sub_x1y2z3",
+  "externalId": "relay-1",
+  "state": { "relay": "ON" },
+  "timestamp": 1732000000000
+}
+```
+
+```json
+{
+  "type": "sub_device_telemetry",
+  "deviceId": "dev_a1b2c3",
+  "accountId": "acc_x1y2z3",
+  "subDeviceId": "sub_x1y2z3",
+  "externalId": "relay-1",
+  "metric": "power_draw",
+  "value": 4.2,
+  "unit": "watts",
+  "timestamp": 1732000000000
+}
+```
+
 <Callout type="info" title="More event types may be added over time">
   Handle unrecognized `msg.type` values by ignoring them rather than
   treating them as errors, so your integration keeps working as new event

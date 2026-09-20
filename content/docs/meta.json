@@ -1,4 +1,4 @@
 {
   "title": "Documentation",
-  "pages": ["index", "quickstart", "concepts", "guides", "reference", "micropython-reference", "arduino-reference"]
+  "pages": ["index", "quickstart", "concepts", "guides", "reference", "micropython-reference", "arduino-reference", "device-orchestration", "sdk"]
 }

@@ -1,0 +1,31 @@
+---
+title: SDK & MCP
+description: Two ways to give your own code, or your own agent, control over Nexalware devices.
+---
+
+Both of these sit on top of the same [REST API](/docs/reference) an API key can already call, they don't add new permissions or a new concept, just two different ways to reach it.
+
+## The short version
+
+- **Building your own agent, or writing plain code that calls Nexalware directly?** Use the SDK, in [TypeScript](/docs/sdk/sdk) or [Python](/docs/sdk/sdk-python). One import, typed methods, no extra moving parts.
+- **Using a pre-built AI tool that you don't control the code of** (Claude Desktop, Claude Code, Cursor, or anything else that speaks [MCP](https://modelcontextprotocol.io))? Use the [MCP server](/docs/sdk/mcp-server). Add it to that tool's config, and its tools show up automatically, no code to write.
+
+## Why both exist
+
+An AI agent you build yourself already has its own function-calling or tool-registration code, you control that loop. Making it go through MCP for that case adds a subprocess and a discovery round-trip for something one direct function call already does. The SDK is that direct call: plain HTTPS underneath, so it's the more universal, lower-latency option whenever you're the one writing the agent.
+
+The [MCP server](/docs/sdk/mcp-server) exists for the opposite case: a host you didn't write the internals of. It can't have a function hand-registered inside it, it needs a standard protocol to discover what's available at runtime. Under the hood, the MCP server is a thin wrapper around the exact same SDK, so both paths call the same code and support the same operations, nothing is more or less capable, they're just two entry points for two different situations.
+
+## Both only reach what the API key is granted
+
+Neither the SDK nor the MCP server introduces a new permission system. Every call is made with an API key, and that key's access is exactly whatever [DeviceGrant](/docs/concepts/authentication-and-access) it already has, no more. A command call is rejected the same way, and with the same reason, whether it came in through curl, the SDK, or an MCP tool call.
+
+<Callout type="info" title="Create a dedicated key for this">
+  Whichever one you use, create a separate API key just for it (dashboard -> API Keys), scoped only to the device(s) it actually needs. An MCP client config in particular holds the raw key in a local file, if that machine is ever compromised, a narrowly-scoped key limits the damage to only what it could already touch.
+</Callout>
+
+## Read next
+
+- **[SDK Reference (TypeScript)](/docs/sdk/sdk)** - install, a full method reference, and a working example.
+- **[SDK Reference (Python)](/docs/sdk/sdk-python)** - the same, in Python.
+- **[MCP Server](/docs/sdk/mcp-server)** - install, the config snippet for Claude Desktop/Code, and the full tool list.

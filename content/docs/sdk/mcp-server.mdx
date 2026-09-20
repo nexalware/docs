@@ -1,0 +1,83 @@
+---
+title: MCP Server
+description: Add Nexalware to any MCP-aware host, Claude Desktop, Claude Code, Cursor, or your own custom agent, no code required.
+---
+
+`@nexalware/mcp` runs your device control tools as an [MCP](https://modelcontextprotocol.io) server over stdio. Point any MCP-aware host at it, and its tools show up automatically, the host's own model decides when to call them. It's a thin wrapper around the [TypeScript SDK](/docs/sdk/sdk), same operations, same permissions, just discoverable instead of hand-coded.
+
+<Callout type="info" title="Building your own agent instead of using a pre-built host?">
+  Use the SDK directly, in [TypeScript](/docs/sdk/sdk) or [Python](/docs/sdk/sdk-python). It's one function call away in code you already control, no subprocess or protocol discovery needed. MCP is for hosts whose internals you don't own, see [SDK & MCP](/docs/sdk) for the fuller comparison.
+</Callout>
+
+## Get an API key
+
+Create one on the dashboard (API Keys), scoped with a [DeviceGrant](/docs/concepts/authentication-and-access) to only the device(s) this agent should touch. This key ends up sitting in a local config file, least privilege matters more here than for a typical server-side integration.
+
+## Claude Code
+
+```bash
+claude mcp add nexalware -e NEXALWARE_API_KEY=nxw_live_sk_your_key_here -- npx -y @nexalware/mcp
+```
+
+## Claude Desktop, or any host using a `mcpServers` config file
+
+Add this block to the host's MCP config (Claude Desktop: Settings -> Developer -> Edit Config):
+
+```json
+{
+  "mcpServers": {
+    "nexalware": {
+      "command": "npx",
+      "args": ["-y", "@nexalware/mcp"],
+      "env": {
+        "NEXALWARE_API_KEY": "nxw_live_sk_your_key_here"
+      }
+    }
+  }
+}
+```
+
+Restart the host afterward, tools only load at startup.
+
+## Environment variables
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `NEXALWARE_API_KEY` | yes | The key from the step above. The server exits immediately with an error if this is missing. |
+| `NEXALWARE_API_URL` | no | Override for a self-hosted or staging deployment. Defaults to the production API. |
+
+Using `npx -y @nexalware/mcp` (not a pinned version) means every launch runs the latest published release, no separate update step.
+
+## Tools
+
+Every tool takes and returns the same shape as its equivalent [TypeScript SDK method](/docs/sdk/sdk), a failed call comes back as a normal MCP tool error with the same message the API itself returns, not a crash.
+
+| Tool | What it does | Required params |
+|---|---|---|
+| `get_device_commands` | List the commands a device accepts. | `deviceId` |
+| `send_command` | Send a command to a device. | `deviceId`, `cmd` |
+| `turn_device_on` | Shorthand for the ON command. | `deviceId` |
+| `turn_device_off` | Shorthand for the OFF command. | `deviceId` |
+| `get_device_telemetry` | Read a device's telemetry history. | `deviceId` |
+| `get_latest_telemetry` | Current state plus latest reading per metric. | `deviceId` |
+| `list_sub_devices` | List sub-devices behind a master. | `deviceId` |
+| `get_sub_device` | Read one sub-device's state and capabilities. | `deviceId`, `subDeviceId` |
+| `get_sub_device_telemetry` | Read one sub-device's telemetry history. | `deviceId`, `subDeviceId` |
+| `send_sub_device_command` | Send a command to one sub-device behind a master. | `deviceId`, `subDeviceId`, `cmd` |
+| `list_schedules` | List a device's active schedules. | `deviceId` |
+| `get_schedule_context` | List the commands available to schedule. | `deviceId` |
+| `create_schedule` | Create or replace a schedule slot (0-4). | `deviceId`, `slot`, `onTs`, `offTs` |
+| `update_schedule` | Update an existing schedule slot. | `deviceId`, `slot` |
+| `delete_schedule` | Cancel a schedule slot. | `deviceId`, `slot` |
+| `get_schedule_history` | List a device's completed/cancelled schedules. | `deviceId` |
+
+## What it can't do
+
+Nothing outside the calling key's own [DeviceGrant](/docs/concepts/authentication-and-access). There's no tool to create a grant, register a device, or manage API keys, those stay dashboard-only, an MCP tool call is only ever as capable as the key you gave it, never able to expand its own access.
+
+One more boundary worth knowing: `create_schedule`/`update_schedule` fire existing commands from a device's catalog, they can't invent new ones. Defining, editing, or deleting a command definition itself (what commands a device type even has) stays a dashboard-only action, that's configuring what a device *is*, not something to do with it.
+
+## Where to go from here
+
+- **[SDK Reference (TypeScript)](/docs/sdk/sdk)** / **[SDK Reference (Python)](/docs/sdk/sdk-python)** - the same operations, called directly from your own code.
+- **[Device Orchestration](/docs/device-orchestration)** - what `list_sub_devices`/`send_sub_device_command` actually operate on, and how a device starts reporting sub-devices in the first place.

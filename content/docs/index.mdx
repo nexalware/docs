@@ -3,9 +3,9 @@ title: Introduction
 description: Connect software and AI agents to the physical world.
 ---
 
-**Nexalware is AIoT infrastructure that lets your software communicate with
-and control your physical devices, machines, and agents through a single
-API.**
+**Nexalware is AIoT infrastructure that lets your software and AI agents
+communicate with and control your physical devices and machines through a
+single API.**
 
 If your application needs to turn on a pump, read a sensor, open a gate,
 move a vehicle, monitor a machine, or coordinate physical systems, Nexalware
@@ -100,32 +100,34 @@ systems it needs to interact with.
     Devices   Machines  Vehicles  Sensors
 ```
 
-## Devices today, physical agents tomorrow
+## Devices that coordinate other devices
 
-Today, the Nexalware API is centered around devices.
+Today, the Nexalware API is centered around devices. A device can represent
+a smart socket, pump, sensor, motor, gateway, or another connected physical
+system, each with its own identity, capabilities, state, and permissions.
 
-A device can represent a smart socket, pump, sensor, motor, gateway, or
-another connected physical system.
-
-As the platform evolves, Nexalware is expanding this model toward physical
-agents. A physical agent can have its own identity, capabilities, state,
-permissions, sensors, actions, and relationships with other agents.
-
-That creates a broader model:
+One device can also go a step further and act as a **master**, coordinating
+a whole team of other physical devices connected to it locally over WiFi or
+Bluetooth, no internet needed between them, see
+[Device Orchestration](/docs/device-orchestration). Those coordinated
+devices are called **sub-devices**, not "agents", they're still physical
+hardware, just smart enough to relay commands and report state for
+whatever is connected behind them. "AI agent" stays the term for the
+software calling Nexalware, never for the physical devices themselves.
 
 ```text
-             AI Agent
-                 │
-                 ↓
-             Nexalware
-                 │
-        ┌────────┼────────┐
-        ↓        ↓        ↓
-     Vehicle   Security   Gate
-      Agent     Agent     Agent
-        │        │        │
-        ↓        ↓        ↓
-     Physical systems and machines
+   Your App / AI Agent
+           │
+           ↓
+       Nexalware
+           │
+           ↓
+     Master Device
+           │
+     ┌─────┼─────┐
+     ↓     ↓     ↓
+   Sub-   Sub-   Sub-
+  device device device
 ```
 
 ## How the API fits in
@@ -243,6 +245,16 @@ Then explore:
     title="Arduino IDE / C Language Reference"
     href="/docs/arduino-reference"
     description="The same device-side loop in C++, for boards programmed from the Arduino IDE."
+  />
+  <Card
+    title="Device Orchestration"
+    href="/docs/device-orchestration"
+    description="One registered device coordinating a whole team of sub-devices connected to it locally, instead of one device per connection."
+  />
+  <Card
+    title="SDK & MCP"
+    href="/docs/sdk"
+    description="Call Nexalware directly from your own agent's code, or let an MCP-aware host like Claude Desktop discover it as tools automatically."
   />
 </Cards>
 

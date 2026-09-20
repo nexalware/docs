@@ -1,0 +1,246 @@
+---
+title: SDK Reference (Python)
+description: Install, every method's parameters and return type, and a working example.
+---
+
+`nexalware` is a typed client for the same "Device Control" endpoints an API key can already call over REST. Zero third-party dependencies, built on `urllib` from the standard library, so dropping it into any existing agent environment can never trigger a version conflict. Writing in TypeScript instead? See the [SDK Reference (TypeScript)](/docs/sdk/sdk).
+
+## Install
+
+```bash
+pip install nexalware
+```
+
+## Quickstart
+
+```python
+from nexalware import NexalwareClient
+
+client = NexalwareClient(api_key="nxw_live_sk_your_key_here")
+
+client.turn_on("dev_a1b2c3")
+
+latest = client.get_latest_telemetry("dev_a1b2c3")
+print(latest["state"], latest["telemetry"])
+```
+
+Get an API key from the dashboard (API Keys), and make sure it has a [DeviceGrant](/docs/concepts/authentication-and-access) covering the device(s) and command(s) you call, an ungranted key authenticates fine but every call is rejected with a 403.
+
+<Callout type="info" title="Field names match the API's own JSON, not snake_case">
+  Return values are plain `dict`s (typed as `TypedDict` for editor/type-checker support), with the same field names the REST API itself uses, e.g. `latest["subDeviceId"]`, not `latest["sub_device_id"]`. Method and argument names are proper Python `snake_case`, only the data payloads keep the wire format, so a field never needs translating between what the docs, the API, and this SDK each call it.
+</Callout>
+
+## `NexalwareClient(api_key, base_url=...)`
+
+| Param | Type | Required | Meaning |
+|---|---|---|---|
+| `api_key` | str | yes | A secret key from the dashboard. |
+| `base_url` | str | no | Override for a self-hosted or staging deployment. Defaults to `https://api.nexalware.com`. |
+
+## Errors
+
+Every method raises `NexalwareApiError` on a non-2xx response, it never returns a "silent" error value.
+
+| Attribute | Type | Meaning |
+|---|---|---|
+| `status` | int | HTTP status code. |
+| `error` | str | Short machine-readable code, e.g. `"FORBIDDEN"`, `"NOT_FOUND"`. |
+| `message` | str \| None | Human-readable reason, same text a dashboard user would see. |
+| `details` | list \| None | Only present on a 400 validation failure. |
+
+```python
+from nexalware import NexalwareApiError
+
+try:
+    client.send_command("dev_a1b2c3", "SET_BRIGHTNESS", params={"level": 60})
+except NexalwareApiError as err:
+    print(err.status, err.error, err.message)
+```
+
+## Methods
+
+### `get_commands(device_id)`
+
+The command catalog this device accepts.
+
+| Param | Type | Required |
+|---|---|---|
+| `device_id` | str | yes |
+
+**Returns** `List[CommandDefinition]`
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | str | Command name, use this as `cmd` in `send_command`. |
+| `label` | str | Human-readable label. |
+| `kind` | `"ACTION"` \| `"QUERY"` | Whether it changes device state or just reads it. |
+| `paramsSchema` | dict \| None | JSON Schema for `params`, `None` if this command takes none. |
+| `requiresApproval` | bool | If `True`, the call still succeeds but queues for manual approval instead of executing immediately. |
+
+### `send_command(device_id, cmd, params=None, target=None)`
+
+Send a command to a device, or, with `target` set, to one specific [sub-device](/docs/device-orchestration) behind it.
+
+| Param | Type | Required | Meaning |
+|---|---|---|---|
+| `device_id` | str | yes | |
+| `cmd` | str | yes | Matches a `name` from `get_commands`. |
+| `params` | dict | no | Only if that command declares a `paramsSchema`. |
+| `target` | str | no | A sub-device's id, to route the command past the master to it. Prefer `send_sub_device_command` below, it's the same call with a clearer name. |
+
+**Returns** `{"ok": True, "approvalRequired": bool | None, "approvalId": str | None}`
+
+### `turn_on(device_id)` / `turn_off(device_id)`
+
+Shorthand for `send_command(device_id, "ON")` / `send_command(device_id, "OFF")`.
+
+| Param | Type | Required |
+|---|---|---|
+| `device_id` | str | yes |
+
+**Returns** `{"ok": True}`
+
+### `get_telemetry(device_id, metric=None, limit=None, since=None)`
+
+Historical telemetry readings, newest first.
+
+| Param | Type | Required | Meaning |
+|---|---|---|---|
+| `device_id` | str | yes | |
+| `metric` | str | no | Only this metric. |
+| `limit` | int | no | 1-1000, defaults to 100. |
+| `since` | int | no | Unix ms, only readings at or after this time. |
+
+**Returns** `List[TelemetryReading]`, each with `metric`, `value`, `valueText`, `unit`, `recordedAt`.
+
+### `get_latest_telemetry(device_id)`
+
+The device's current state snapshot plus the most recent reading per metric, one call instead of paging through history.
+
+| Param | Type | Required |
+|---|---|---|
+| `device_id` | str | yes |
+
+**Returns** `{"state": ..., "relayState": ..., "telemetry": List[TelemetryReading]}`
+
+### `list_sub_devices(device_id)`
+
+Physical devices connected locally behind this one, if it's acting as a [master](/docs/device-orchestration). Empty until the master actually reports one, never includes software agents.
+
+| Param | Type | Required |
+|---|---|---|
+| `device_id` | str | yes |
+
+**Returns** `List[SubDevice]`, each with `subDeviceId`, `externalId`, `name`, `state`, `capabilities`, `isOnline`, `lastSeen`.
+
+### `get_sub_device(device_id, sub_device_id)`
+
+One sub-device's current state and capabilities.
+
+| Param | Type | Required |
+|---|---|---|
+| `device_id` | str | yes |
+| `sub_device_id` | str | yes |
+
+**Returns** `SubDevice`
+
+### `get_sub_device_telemetry(device_id, sub_device_id, metric=None, limit=None, since=None)`
+
+Same shape as `get_telemetry`, scoped to one sub-device.
+
+| Param | Type | Required |
+|---|---|---|
+| `device_id` | str | yes |
+| `sub_device_id` | str | yes |
+| `metric` / `limit` / `since` | | no |
+
+**Returns** `List[TelemetryReading]`
+
+### `send_sub_device_command(device_id, sub_device_id, cmd, params=None)`
+
+Convenience wrapper over `send_command` with `target` already set. Not validated against a catalog, Nexalware relays it opaquely, the master and sub-device interpret it between themselves.
+
+| Param | Type | Required |
+|---|---|---|
+| `device_id` | str | yes |
+| `sub_device_id` | str | yes |
+| `cmd` | str | yes |
+| `params` | dict | no |
+
+**Returns** `{"ok": True}`
+
+### `list_schedules(device_id)`
+
+A device's active (pending or currently running) schedules.
+
+| Param | Type | Required |
+|---|---|---|
+| `device_id` | str | yes |
+
+**Returns** `List[Schedule]`, each with `scheduleId`, `slot`, `onTs`, `offTs`, `label`, `enabled`, `status`, `onCommand`, `offCommand`.
+
+### `get_schedule_context(device_id)`
+
+The commands available to schedule, same catalog `get_commands` returns.
+
+| Param | Type | Required |
+|---|---|---|
+| `device_id` | str | yes |
+
+**Returns** `{"commands": List[CommandDefinition]}`
+
+### `create_schedule(device_id, slot, on_ts, off_ts, label=None, enabled=None, on_command=None, off_command=None)`
+
+Create or replace one of a device's schedule slots (0-4), firing `on_command` at `on_ts` and `off_command` at `off_ts`.
+
+| Param | Type | Required | Meaning |
+|---|---|---|---|
+| `device_id` | str | yes | |
+| `slot` | int | yes | 0-4. |
+| `on_ts` | int | yes | Unix seconds to fire `on_command`. |
+| `off_ts` | int | yes | Unix seconds to fire `off_command`. |
+| `label` | str | no | Shown on the dashboard, max 7 characters. |
+| `enabled` | bool | no | |
+| `on_command` | `{"command": ..., "params": ...}` | no | Defaults to `{"command": "ON"}`. |
+| `off_command` | `{"command": ..., "params": ...}` | no | Defaults to `{"command": "OFF"}`. |
+
+**Returns** `Schedule`. Raises `NexalwareApiError` (403) if the calling key lacks permission for either command, same gate `send_command` applies, a schedule is just that same action, deferred.
+
+### `update_schedule(device_id, slot, on_ts=None, off_ts=None, label=None, enabled=None, on_command=None, off_command=None)`
+
+Update an existing schedule slot, only the arguments provided are changed.
+
+| Param | Type | Required |
+|---|---|---|
+| `device_id` | str | yes |
+| `slot` | int | yes |
+| everything else | | no |
+
+**Returns** `Schedule`
+
+### `delete_schedule(device_id, slot)`
+
+Cancel a schedule slot.
+
+| Param | Type | Required |
+|---|---|---|
+| `device_id` | str | yes |
+| `slot` | int | yes |
+
+**Returns** `{"ok": True}`
+
+### `get_schedule_history(device_id)`
+
+A device's completed or cancelled schedules, most recent first.
+
+| Param | Type | Required |
+|---|---|---|
+| `device_id` | str | yes |
+
+**Returns** `List[Schedule]`
+
+## Where to go from here
+
+- **[SDK Reference (TypeScript)](/docs/sdk/sdk)** - the same operations, in TypeScript.
+- **[MCP Server](/docs/sdk/mcp-server)** - the same operations, exposed as MCP tools instead, for a host you don't control the code of.
+- **[The Sub-Device Contract](/docs/device-orchestration/sub-device-contract)** - if `list_sub_devices`/`send_sub_device_command` return nothing yet, this is what the master firmware needs to implement first.

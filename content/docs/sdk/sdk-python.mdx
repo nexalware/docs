@@ -36,6 +36,7 @@ Get an API key from the dashboard (API Keys), and make sure it has a [DeviceGran
 |---|---|---|---|
 | `api_key` | str | yes | A secret key from the dashboard. |
 | `base_url` | str | no | Override for a self-hosted or staging deployment. Defaults to `https://api.nexalware.com`. |
+| `timeout` | float | no | Abort a request after this many seconds. Defaults to `30.0`. |
 
 ## Errors
 
@@ -58,6 +59,16 @@ except NexalwareApiError as err:
 ```
 
 ## Methods
+
+### `list_devices(project_id=None)`
+
+The devices this key can actually act on, only what its own [DeviceGrant](/docs/concepts/authentication-and-access)(s) cover, never the rest of the account. Call this first to discover valid `device_id` values instead of needing them hardcoded or pasted in.
+
+| Param | Type | Required | Meaning |
+|---|---|---|---|
+| `project_id` | str | no | Only devices in this project. |
+
+**Returns** `List[Device]`, each with `deviceId`, `name`, `boardType`, `appType`, `deviceStatus`, `enabled`, `isOnline`, `lastSeen`, `project`.
 
 ### `get_commands(device_id)`
 

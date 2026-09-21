@@ -54,6 +54,7 @@ Every tool takes and returns the same shape as its equivalent [TypeScript SDK me
 
 | Tool | What it does | Required params |
 |---|---|---|
+| `list_devices` | List the devices this key can act on (only what its DeviceGrant(s) cover). The natural first call, an agent that doesn't already know a deviceId starts here. | none |
 | `get_device_commands` | List the commands a device accepts. | `deviceId` |
 | `send_command` | Send a command to a device. | `deviceId`, `cmd` |
 | `turn_device_on` | Shorthand for the ON command. | `deviceId` |

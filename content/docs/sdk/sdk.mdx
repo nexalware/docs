@@ -28,12 +28,17 @@ console.log(latest.state, latest.telemetry);
 
 Get an API key from the dashboard (API Keys), and make sure it has a [DeviceGrant](/docs/concepts/authentication-and-access) covering the device(s) and command(s) you call, an ungranted key authenticates fine but every call is rejected with a 403.
 
+<Callout type="warn" title="Server-side only">
+  This client sends your API key as a plain header on every request. Never import it into frontend/browser code, anyone opening dev tools or reading the shipped JS bundle would see the key. Call it from a backend, script, or agent process, and if a browser needs to trigger a device action, put your own authenticated endpoint in between.
+</Callout>
+
 ## `new NexalwareClient(options)`
 
 | Option | Type | Required | Meaning |
 |---|---|---|---|
 | `apiKey` | string | yes | A secret key from the dashboard. |
 | `baseUrl` | string | no | Override for a self-hosted or staging deployment. Defaults to `https://api.nexalware.com`. |
+| `timeoutMs` | number | no | Abort a request after this many milliseconds. Defaults to `30000`. |
 
 ## Errors
 
@@ -59,6 +64,16 @@ try {
 ```
 
 ## Methods
+
+### `listDevices(query?)`
+
+The devices this key can actually act on, only what its own [DeviceGrant](/docs/concepts/authentication-and-access)(s) cover, never the rest of the account. Call this first to discover valid `deviceId` values instead of needing them hardcoded or pasted in from the dashboard.
+
+| Param | Type | Required | Meaning |
+|---|---|---|---|
+| `query.projectId` | string | no | Only devices in this project. |
+
+**Returns** `Promise<Device[]>`, each with `deviceId`, `name`, `boardType`, `appType`, `deviceStatus`, `enabled`, `isOnline`, `lastSeen`, `project`.
 
 ### `getCommands(deviceId)`
 

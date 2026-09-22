@@ -9,6 +9,10 @@ A complete, worked example: a "Garage Light" relay sub-device, circuit and firmw
   Proteus runs natively on Windows. On macOS/Linux you'd need to run it inside a Windows VM (or Wine, unofficially), and bridge that VM's virtual COM port out to the host. The rest of this walkthrough assumes Windows.
 </Callout>
 
+<Callout type="info" title="Proteus and the master on different machines?">
+  This walkthrough assumes both run on the same Windows PC (`SerialTransport` is same-machine only). If Proteus is on one machine and your master script needs to run elsewhere, see [Remote & Multi-Machine Simulation](/docs/simulate/remote) for `WebSocketTransport` and the `nexalware-serial-bridge` CLI.
+</Callout>
+
 ## 1. Register a master device
 
 On the dashboard, register a device the normal way and generate credentials, this is your **master**, exactly like any other device (see [Register Your First Device](/docs/guides/register-your-first-device)). You don't need to register the sub-device itself anywhere, it only exists behind the master, see [Device Orchestration](/docs/device-orchestration) for why.

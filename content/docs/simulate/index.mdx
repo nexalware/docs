@@ -32,7 +32,17 @@ npm install serialport
 pip install nexalware-simulate[serial]
 ```
 
-`serialport`/`pyserial` are optional - installing the base package never pulls in native serial bindings you don't need.
+Only if you're using `WebSocketTransport` (see [Remote & Multi-Machine Simulation](/docs/simulate/remote)) or the `nexalware-serial-bridge` CLI, which needs both:
+
+```bash
+npm install ws
+```
+```bash
+pip install nexalware-simulate[websocket]      # WebSocketTransport only
+pip install nexalware-simulate[serial-bridge]  # the CLI (needs pyserial too)
+```
+
+`serialport`/`ws`/`pyserial` are optional - installing the base package never pulls in native serial bindings or a WebSocket library you don't need.
 
 ## A single simulated device
 
@@ -113,7 +123,18 @@ new SerialTransport({ path: "COM3", baudRate: 9600 })
 SerialTransport("COM3", baud_rate=9600)
 ```
 
-Opens the port and wires its read/write directly to a master's `receiveSubDeviceMessage`/`subDeviceSend`. `.attach(master)` to start, `.close()` to stop.
+Opens the port and wires its read/write directly to a master's `receiveSubDeviceMessage`/`subDeviceSend`. `.attach(master)` to start, `.close()` to stop. Same-machine only, see `WebSocketTransport` below for sub-devices on another machine.
+
+### `WebSocketTransport`
+
+```ts
+new WebSocketTransport({ port: 8080, token: "a-shared-secret" })
+```
+```python
+WebSocketTransport(port=8080, token="a-shared-secret")
+```
+
+The network-capable transport: hosts a WebSocket server sub-devices connect **in** to (the same model the reference ESP32 master uses), instead of a local serial port. Any number of sub-devices can connect simultaneously, each connection becomes its own tracked sub-device automatically. `.attach(master)` to start listening, `.close()` to stop. `token` is optional but strongly recommended off-localhost, it's checked at the WebSocket handshake, before an unauthorized connection can inject a fake sub-device. See [Remote & Multi-Machine Simulation](/docs/simulate/remote) for the full walkthrough, including a serial-bridge CLI (`nexalware-serial-bridge`) for the Proteus-on-a-different-machine case.
 
 ## Why isn't this an MCP tool?
 
@@ -122,5 +143,6 @@ Opens the port and wires its read/write directly to a master's `receiveSubDevice
 ## Where to go from here
 
 - **[Proteus Walkthrough](/docs/simulate/proteus-walkthrough)** - the full worked example: circuit, Arduino sketch, COMPIM wiring, PC-side script.
+- **[Remote & Multi-Machine Simulation](/docs/simulate/remote)** - `WebSocketTransport`, running a master and its sub-devices on different machines, and the classroom scenario (one master, many student-run sub-devices).
 - **[Device Orchestration](/docs/device-orchestration)** / **[The Sub-Device Contract](/docs/device-orchestration/sub-device-contract)** - the concepts this package implements.
 - **[SDK Reference (TypeScript)](/docs/sdk/sdk)** / **[SDK Reference (Python)](/docs/sdk/sdk-python)** - the REST side: registering devices, generating credentials, reading telemetry history, schedules.

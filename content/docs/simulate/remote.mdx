@@ -1,0 +1,108 @@
+---
+title: Remote & Multi-Machine Simulation
+description: Run a master on one machine and sub-devices (simulated or real) on others, over the network instead of a local serial port.
+---
+
+`SerialTransport` only works when the master script and the sub-device (or its Proteus simulation) are on the *same* machine, a local COM port, or a `com0com`/null-modem virtual pair, is an OS-local construct that can't cross a network. `WebSocketTransport` is the network-capable equivalent: instead of opening a local port, the master hosts a WebSocket server that sub-devices connect **in** to, the same model the reference ESP32 master already uses (see [Master Reference](/docs/device-orchestration/master-reference)) - a PC master built this way accepts connections from real firmware too, not just simulated sub-devices.
+
+<Callout type="info" title="Same MasterDevice, different transport">
+  Nothing else changes. `receiveSubDeviceMessage`/`on("subDeviceSend", ...)` (Python: `receive_sub_device_message`/`on_sub_device_send`), `publishStatus`, the Sub-Device Contract itself, all identical to the [`SerialTransport` walkthrough](/docs/simulate/proteus-walkthrough). Only the transport you attach changes.
+</Callout>
+
+## When you need this
+
+- **A classroom or workshop** - one instructor machine runs the master, each student simulates or runs their own sub-device on their own laptop, all connecting to the same master over the network.
+- **Proteus on one PC, the master on another** - the circuit simulation runs on a Windows machine (Proteus is Windows-native), but the master script runs elsewhere, another machine, a server, a Mac/Linux box that can't run Proteus directly.
+- **A real sub-device connecting to a PC-hosted master** - firmware built against the [Sub-Device Contract](/docs/device-orchestration/sub-device-contract) that expects to connect in over WebSocket works against a `WebSocketTransport` master exactly as it would against a real ESP32 master.
+
+## The master: `WebSocketTransport`
+
+```ts
+import { MasterDevice, WebSocketTransport } from "@nexalware/simulate";
+
+const master = new MasterDevice({ deviceId: "dev_master1", mqttUsername: "d_master1x", mqttPassword: "..." });
+await master.connect();
+
+const transport = new WebSocketTransport({ port: 8080, token: "a-shared-secret" });
+await transport.attach(master); // starts listening; every connection becomes its own tracked sub-device
+
+master.startHeartbeat();
+```
+
+```python
+from nexalware_simulate import MasterDevice
+from nexalware_simulate.transports.websocket import WebSocketTransport
+
+master = MasterDevice("dev_master1", "d_master1x", "...")
+master.connect()
+
+transport = WebSocketTransport(port=8080, token="a-shared-secret")
+transport.attach(master)  # starts listening; every connection becomes its own tracked sub-device
+
+master.start_heartbeat()
+```
+
+### `WebSocketTransport(options)`
+
+| Option | Type | Required | Meaning |
+|---|---|---|---|
+| `port` | number | yes | Which port to listen on for incoming sub-device connections. |
+| `host` | string | no | Defaults to all interfaces. Set to `"127.0.0.1"` to only accept connections from this same machine. |
+| `token` | string | no | Required by connecting clients as `?token=...` in the connection URL. **Omit it only for same-machine/trusted-network testing** - without one, anything that can reach `port` can inject a fake sub-device into this master. Checked at the WebSocket handshake, before any message from an unauthorized connection can reach `receiveSubDeviceMessage`. |
+
+- **`.attach(master)`** - starts the server (resolves/blocks once listening) and wires it to `master`. Every inbound connection becomes its own `channelId` automatically, so simultaneous sub-devices (the classroom scenario) work with zero extra code beyond running multiple clients against the same port.
+- **`.close()`** - stops the server and closes every open connection.
+- If `token` is omitted, a warning is printed (`console.warn` / stderr) so an open, unauthenticated listener is never silent.
+
+A connection that closes just stops being routed to, its sub-device goes stale on the dashboard (like any sub-device that stops reporting) until it reconnects with a fresh `identify`.
+
+## The sub-device side
+
+Anything that can open a WebSocket connection and speak the [Sub-Device Contract](/docs/device-orchestration/sub-device-contract) works here; three common cases:
+
+**A simulated sub-device you write yourself** (the classroom case) - connect a plain WebSocket client to `ws://<master-host>:<port>?token=<token>` and send `identify`/`describe`/`state` as text frames, exactly the same JSON shapes as the `SerialTransport` walkthrough's `sub_device.ino`, just over a socket instead of `Serial`.
+
+**Proteus on a different machine than the master** - use the serial-bridge CLI below, it does the socket part for you.
+
+**A real embedded sub-device** - firmware that opens a WebSocket to the master's `host:port` on boot and speaks the contract directly, no bridge needed.
+
+## Bridging a local serial port to a remote master
+
+For the Proteus-on-another-machine case specifically: `nexalware-serial-bridge` is a small, purely mechanical CLI that opens a local COM port and relays every line to a WebSocket client connection pointed at a remote `WebSocketTransport`, and back. It has no Nexalware protocol knowledge, it just moves lines of text, which also makes it reusable for bridging *any* local serial device to a remote master, simulated or real.
+
+Install (on the machine running Proteus/the physical serial port):
+
+```bash
+npm install -g @nexalware/simulate ws serialport
+```
+```bash
+pip install "nexalware-simulate[serial-bridge]"
+```
+
+Run it:
+
+```bash
+npx nexalware-serial-bridge --port COM3 --baud 9600 --url ws://master-host:8080 --token a-shared-secret
+```
+```bash
+nexalware-serial-bridge --port COM3 --baud 9600 --url ws://master-host:8080 --token a-shared-secret
+```
+
+| Flag | Meaning |
+|---|---|
+| `--port` | Local serial/COM port, e.g. `COM3` or `/dev/ttyUSB0`. Same port your COMPIM/board is wired to. |
+| `--baud` | Baud rate, must match the sketch. Defaults to `9600`. |
+| `--url` | The remote master's `WebSocketTransport` URL, e.g. `ws://master-host:8080`. |
+| `--token` | The `WebSocketTransport`'s token, if it has one. Omit only if the master was started without one. |
+
+With this running, Proteus on this machine talks to the bridge over `COM3` exactly as it would to a local `SerialTransport`, and the bridge relays every line to the remote master over the network. The rest of the [Proteus walkthrough](/docs/simulate/proteus-walkthrough) (circuit, sketch, running it) is unchanged, only the master's transport and this bridge process differ.
+
+## Reachability is your concern, not this package's
+
+`WebSocketTransport` opens a normal TCP listener, everything you already know about reaching a port applies: same LAN works out of the box; across the internet or behind NAT/a firewall, you're responsible for port-forwarding or a tunnel (a plain SSH tunnel, [ngrok](https://ngrok.com/), or [Tailscale](https://tailscale.com/) are common choices) to make `--url`/`host` actually reachable from the sub-device side. This package doesn't attempt to solve networking for you, only the WebSocket transport and the sub-device relay once a connection can be made.
+
+## Where to go from here
+
+- **[Simulate overview](/docs/simulate)** - the full API reference, including `SerialTransport` for the same-machine case.
+- **[Proteus Walkthrough](/docs/simulate/proteus-walkthrough)** - the worked circuit/sketch example this page's bridge CLI plugs into for the two-machine variant.
+- **[The Sub-Device Contract](/docs/device-orchestration/sub-device-contract)** - the message shapes every sub-device, local or remote, sends and receives.

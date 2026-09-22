@@ -1,0 +1,126 @@
+---
+title: Simulate
+description: Act as a real Nexalware device, or a master orchestrating sub-devices, from a plain PC process - no physical hardware required.
+---
+
+`@nexalware/simulate` (npm) and `nexalware-simulate` (PyPI) let a plain Node.js or Python process act as a real Nexalware device, or a [master](/docs/device-orchestration) orchestrating [sub-devices](/docs/device-orchestration/sub-device-contract), with none of the embedded firmware or physical hardware [MicroPython](/docs/micropython-reference)/[Arduino](/docs/arduino-reference) devices normally need.
+
+<Callout type="info" title="This isn't a special simulation mode">
+  Nexalware's device connection is plain MQTT with username/password auth, nothing embedded-specific about it - "anything with a TCP stack and an MQTT client library can connect the same way" (see the [MicroPython Reference](/docs/micropython-reference)). This package doesn't add a new capability to the platform, it just gives a PC process the same easy API the REST SDK already has for the HTTP side, instead of you hand-rolling raw MQTT.
+</Callout>
+
+## Two things this is for
+
+- **Simulating a device you haven't built yet.** Design a circuit in a simulator like [Proteus](/docs/simulate/proteus-walkthrough), write real Arduino sketch code implementing the [Sub-Device Contract](/docs/device-orchestration/sub-device-contract) over `Serial`, bridge it into your PC over a real or virtual COM port, and it shows up on your dashboard exactly like a physical board would. Prove a project works, run a classroom demo, before anyone needs to buy or solder anything.
+- **Running a genuine production master from a PC instead of an ESP32.** A PC is strictly more capable than a microcontroller, and nothing about a [master](/docs/device-orchestration) requires embedded hardware specifically - this is a real, supported way to run one, not just a testing shortcut.
+
+## Install
+
+```bash
+npm install @nexalware/simulate
+```
+```bash
+pip install nexalware-simulate
+```
+
+Only if you're bridging a serial/COM port (the Proteus workflow, or any real USB-serial board):
+
+```bash
+npm install serialport
+```
+```bash
+pip install nexalware-simulate[serial]
+```
+
+`serialport`/`pyserial` are optional - installing the base package never pulls in native serial bindings you don't need.
+
+## A single simulated device
+
+```ts
+import { NexalwareDevice } from "@nexalware/simulate";
+
+const device = new NexalwareDevice({
+  deviceId: "dev_a1b2c3",
+  mqttUsername: "d_a1b2c3d4",
+  mqttPassword: "your-device-password",
+});
+
+device.on("command", (cmd) => {
+  device.publishStatus({ relay: cmd === "ON" ? "ON" : "OFF" });
+});
+
+await device.connect();
+device.startHeartbeat();
+```
+
+```python
+from nexalware_simulate import NexalwareDevice
+
+device = NexalwareDevice("dev_a1b2c3", "d_a1b2c3d4", "your-device-password")
+device.on_command = lambda cmd, params: device.publish_status(relay="ON" if cmd == "ON" else "OFF")
+device.connect()
+device.start_heartbeat()
+```
+
+`mqttUsername`/`mqttPassword` come from the dashboard's Credentials tab for a device you've registered, the exact same credentials the MicroPython/Arduino references use.
+
+## A master with simulated sub-devices
+
+```ts
+import { MasterDevice, SerialTransport } from "@nexalware/simulate";
+
+const master = new MasterDevice({ deviceId: "dev_master1", mqttUsername: "d_master1x", mqttPassword: "..." });
+await master.connect();
+
+const transport = new SerialTransport({ path: "COM3", baudRate: 9600 });
+await transport.attach(master); // every message your sketch sends over Serial becomes a tracked sub-device
+
+master.startHeartbeat();
+```
+
+See the [full Proteus walkthrough](/docs/simulate/proteus-walkthrough) for the circuit + Arduino sketch side of this.
+
+## API reference
+
+### `NexalwareDevice(options)`
+
+| Option | Type | Required | Meaning |
+|---|---|---|---|
+| `deviceId` | string | yes | This device's public id, e.g. `"dev_a1b2c3"`. |
+| `mqttUsername` | string | yes | From the dashboard's Credentials tab. |
+| `mqttPassword` | string | yes | From the same tab - shown once, generate new credentials if lost. |
+| `mqttHost` | string | no | Override for a self-hosted deployment. Defaults to `mqtt.nexalware.com`. |
+| `mqttPort` | number | no | Override for a self-hosted deployment. Defaults to `1883`. |
+
+- **`connect()`** - connects and subscribes to the command topic, resolves once confirmed.
+- **`disconnect()`** - stops the heartbeat and closes the connection.
+- **`publishStatus(partial)`** - merges `partial` (`relay`, `state`, `telemetry`, `uptime`) into the last published status and publishes it. `device_id`/`ts` are filled in automatically.
+- **`startHeartbeat(intervalMs?)`** / **`stopHeartbeat()`** - republishes the last status on a timer (default 20s), so the device stays "online" under the backend's 35s heartbeat-timeout window.
+- **`on("connected" | "disconnected" | "command" | "error", ...)`** (Python: `on_connected`/`on_disconnected`/`on_command`/`on_error` callback attributes).
+
+### `MasterDevice(options)` - everything above, plus:
+
+- **`receiveSubDeviceMessage(channelId, raw)`** (Python: `receive_sub_device_message`) - feed it one line of raw JSON from a sub-device on `channelId` (a stable id for that physical connection, e.g. a serial port's path). One connection = one sub-device: a sub-device's `identify` is the only message carrying its id, every later message on the same `channelId` is assumed to be from the same sub-device.
+- **`publishStatus`** - same as above, but `sub_devices` is built automatically from everything sub-devices have reported.
+- **`on("subDeviceSend", (channelId, message) => ...)`** (Python: `on_sub_device_send` callback) - the master wants to send `message` down to the sub-device on `channelId`, your transport writes the actual bytes.
+
+### `SerialTransport`
+
+```ts
+new SerialTransport({ path: "COM3", baudRate: 9600 })
+```
+```python
+SerialTransport("COM3", baud_rate=9600)
+```
+
+Opens the port and wires its read/write directly to a master's `receiveSubDeviceMessage`/`subDeviceSend`. `.attach(master)` to start, `.close()` to stop.
+
+## Why isn't this an MCP tool?
+
+[`@nexalware/mcp`](/docs/sdk/mcp-server)'s tools are request/response, an agent calls one and gets an answer back. A device or master needs a long-held, continuously-listening MQTT connection, reacting to commands in real time, a fundamentally different shape than a stateless tool call - so this stays a library you run in your own script/process, not a tool an agent calls.
+
+## Where to go from here
+
+- **[Proteus Walkthrough](/docs/simulate/proteus-walkthrough)** - the full worked example: circuit, Arduino sketch, COMPIM wiring, PC-side script.
+- **[Device Orchestration](/docs/device-orchestration)** / **[The Sub-Device Contract](/docs/device-orchestration/sub-device-contract)** - the concepts this package implements.
+- **[SDK Reference (TypeScript)](/docs/sdk/sdk)** / **[SDK Reference (Python)](/docs/sdk/sdk-python)** - the REST side: registering devices, generating credentials, reading telemetry history, schedules.

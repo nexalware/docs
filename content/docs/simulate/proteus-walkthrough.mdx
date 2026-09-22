@@ -1,0 +1,159 @@
+---
+title: Proteus Walkthrough
+description: Simulate a Nexalware sub-device in Proteus, no physical board, using @nexalware/simulate as the master.
+---
+
+A complete, worked example: a "Garage Light" relay sub-device, circuit and firmware fully simulated in [Proteus](https://www.labcenter.com/), talking to a master running on your PC over `@nexalware/simulate`. Nothing here is physical, everything shows up on the Nexalware dashboard exactly as if it were.
+
+<Callout type="warn" title="Proteus is Windows-native">
+  Proteus runs natively on Windows. On macOS/Linux you'd need to run it inside a Windows VM (or Wine, unofficially), and bridge that VM's virtual COM port out to the host. The rest of this walkthrough assumes Windows.
+</Callout>
+
+## 1. Register a master device
+
+On the dashboard, register a device the normal way and generate credentials, this is your **master**, exactly like any other device (see [Register Your First Device](/docs/guides/register-your-first-device)). You don't need to register the sub-device itself anywhere, it only exists behind the master, see [Device Orchestration](/docs/device-orchestration) for why.
+
+## 2. Design the circuit in Proteus
+
+A minimal circuit: an Arduino Uno, an LED (+ resistor) on pin 13 standing in for the relay, and a **COMPIM** component, Proteus's virtual instrument for bridging a simulated UART to a real Windows COM port. Wire COMPIM's RX/TX to the Arduino's TX/RX (crossed, as usual), set its physical COM port (e.g. `COM3`) and baud rate (`9600`) to match what the sketch below uses. COM3 must exist on the Windows side, either a real port or a virtual pair created by a null-modem tool, your PC-side script (step 4) opens that same port number.
+
+## 3. Write the sub-device sketch
+
+Real Arduino C++, using [ArduinoJson](https://arduinojson.org/) - this is exactly what would run on physical hardware too, nothing in this file is simulation-specific.
+
+```cpp title="sub_device.ino"
+#include <ArduinoJson.h>
+
+const char* SUB_DEVICE_ID = "relay-1";
+const char* SUB_DEVICE_NAME = "Garage Light";
+const int RELAY_PIN = 13;
+bool relayOn = false;
+
+void sendLine(JsonDocument& doc) {
+  serializeJson(doc, Serial);
+  Serial.println();
+}
+
+void sendIdentify() {
+  JsonDocument doc;
+  doc["type"] = "identify";
+  doc["id"] = SUB_DEVICE_ID;
+  doc["name"] = SUB_DEVICE_NAME;
+  doc["kind"] = "relay";
+  sendLine(doc);
+}
+
+void sendDescribe() {
+  JsonDocument doc;
+  doc["type"] = "describe";
+  JsonArray commands = doc["commands"].to<JsonArray>();
+  commands.add<JsonObject>()["name"] = "ON";
+  commands.add<JsonObject>()["name"] = "OFF";
+  sendLine(doc);
+}
+
+void sendState() {
+  JsonDocument doc;
+  doc["type"] = "state";
+  doc["relay"] = relayOn ? "ON" : "OFF";
+  sendLine(doc);
+}
+
+void sendResult(const char* cmd, bool ok) {
+  JsonDocument doc;
+  doc["type"] = "result";
+  doc["cmd"] = cmd;
+  doc["ok"] = ok;
+  sendLine(doc);
+}
+
+void handleCommand(JsonDocument& doc) {
+  const char* cmd = doc["cmd"];
+  if (strcmp(cmd, "ON") == 0) {
+    relayOn = true;
+    digitalWrite(RELAY_PIN, HIGH);
+    sendResult(cmd, true);
+    sendState();
+  } else if (strcmp(cmd, "OFF") == 0) {
+    relayOn = false;
+    digitalWrite(RELAY_PIN, LOW);
+    sendResult(cmd, true);
+    sendState();
+  } else {
+    sendResult(cmd, false);
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(RELAY_PIN, OUTPUT);
+  delay(500); // let the master's transport finish opening the port
+  sendIdentify();
+  sendDescribe();
+  sendState();
+}
+
+void loop() {
+  if (Serial.available()) {
+    String line = Serial.readStringUntil('\n');
+    JsonDocument doc;
+    if (deserializeJson(doc, line) == DeserializationError::Ok && doc["type"] == "command") {
+      handleCommand(doc);
+    }
+  }
+}
+```
+
+This implements four of the six [Sub-Device Contract](/docs/device-orchestration/sub-device-contract) messages (`identify`, `describe`, `state`, `result`), the two it accepts (`command`) round out the loop, no `health`/`verify` here since this simple relay has nothing extra to report and can't independently confirm anything happened.
+
+## 4. The PC-side master script
+
+```ts
+import { MasterDevice, SerialTransport } from "@nexalware/simulate";
+
+const master = new MasterDevice({
+  deviceId: "dev_master1",       // from step 1
+  mqttUsername: "d_master1x",    // from the dashboard's Credentials tab
+  mqttPassword: "your-password",
+});
+
+master.on("connected", () => console.log("Master online"));
+
+await master.connect();
+
+const transport = new SerialTransport({ path: "COM3", baudRate: 9600 }); // same COM3 as COMPIM
+await transport.attach(master);
+
+master.startHeartbeat();
+console.log("Waiting for the sub-device to identify itself...");
+```
+
+```python
+from nexalware_simulate import MasterDevice
+from nexalware_simulate.transports.serial import SerialTransport
+
+master = MasterDevice("dev_master1", "d_master1x", "your-password")
+master.on_connected = lambda: print("Master online")
+master.connect()
+
+transport = SerialTransport("COM3", baud_rate=9600)  # same COM3 as COMPIM
+transport.attach(master)
+
+master.start_heartbeat()
+input("Waiting for the sub-device to identify itself... press Enter to exit\n")
+```
+
+## 5. Run it
+
+1. Start the PC-side script first (it needs to hold `COM3` open before Proteus tries to talk to it).
+2. Start the Proteus simulation.
+3. Within a few seconds, `identify`/`describe`/`state` arrive over the (virtual) wire, and "Garage Light" shows up under the master's **Sub-Devices** tab on the dashboard, with an `ON`/`OFF` command catalog, exactly like a real device would.
+4. Send `ON` from the dashboard (or `sendSubDeviceCommand`/`send_sub_device_command` from the SDK, or the [`send_sub_device_command` MCP tool](/docs/sdk/mcp-server)) - it relays through the master, over the virtual serial link, into the running simulation, and the LED lights up in Proteus.
+
+No physical hardware anywhere in this loop, and nothing about steps 3-4 would look any different to Nexalware if `sub_device.ino` were flashed onto a real Arduino wired to a real relay instead.
+
+## Where to go from here
+
+- **[Simulate overview](/docs/simulate)** - the full `NexalwareDevice`/`MasterDevice`/`SerialTransport` API reference.
+- **[The Sub-Device Contract](/docs/device-orchestration/sub-device-contract)** - every message, in full, if your sub-device needs more than ON/OFF (params, telemetry, `verify`).
+- **[Arduino Reference](/docs/arduino-reference)** - once you're ready to move `sub_device.ino` onto real hardware, this is the same language, same `Serial`-based pattern, just talking to Nexalware directly instead of through a master.

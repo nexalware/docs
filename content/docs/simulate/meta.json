@@ -1,0 +1,6 @@
+{
+  "title": "Simulate",
+  "description": "Act as a real Nexalware device, or a master orchestrating sub-devices, from a plain PC process - no physical hardware required.",
+  "icon": "FlaskConical",
+  "pages": ["index", "proteus-walkthrough"]
+}

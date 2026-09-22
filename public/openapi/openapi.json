@@ -1432,10 +1432,24 @@
         "tags": [
           "Devices"
         ],
-        "summary": "List devices in your account",
+        "summary": "List devices",
+        "description": "A dashboard session sees every device on the account. An API key only sees devices its own DeviceGrants actually cover (a direct device grant, or a project-level grant covering everything in that project) - the same scoping every command call is checked against, applied here too so a key never enumerates devices it has no access to. This is the right first call for an agent (SDK or the MCP server's `list_devices` tool) to make: discover which devices this key can act on before calling anything else.",
         "security": [
           {
             "sessionAuth": []
+          },
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "projectId",
+            "in": "query"
           }
         ],
         "responses": {
@@ -2570,6 +2584,202 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{deviceId}/nl-command": {
+      "post": {
+        "tags": [
+          "Device Control"
+        ],
+        "summary": "Interpret free text into a command and send it",
+        "description": "Runs `text` against this device's (or, with `target` set, a sub-device's) own command catalog through an LLM, then dispatches whatever command it resolves through the exact same path `POST .../command` uses - same DeviceGrant check, same approval flow, same everything. If the text doesn't clearly resolve to one catalog command, nothing is sent - the response comes back with `ok: false` and a `reply` you can show the caller instead. Meant for building a chat-style interface on top of the API; the strict/structured way to send a command is still `POST .../command`.",
+        "security": [
+          {
+            "apiKeyAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DeviceId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500,
+                    "description": "Free-text instruction, interpreted against this device's (or sub-device's, if target is set) own command catalog. Not guaranteed to resolve - see the response's \"reply\" and \"interpreted\" fields.",
+                    "example": "turn the porch light on and dim it to half"
+                  },
+                  "target": {
+                    "type": "string",
+                    "description": "A sub-device ID behind this device to interpret and dispatch against instead of the device itself.",
+                    "example": "sub_x1y2z3"
+                  }
+                },
+                "required": [
+                  "text"
+                ]
+              },
+              "examples": {
+                "Plain instruction": {
+                  "value": {
+                    "text": "turn the porch light on"
+                  }
+                },
+                "Aimed at a sub-device": {
+                  "value": {
+                    "text": "open the garage door",
+                    "target": "sub_x1y2z3"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Either the command was sent, or nothing matched clearly enough to act on",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "reply": {
+                      "type": "string",
+                      "description": "A short natural-language message to show the user."
+                    },
+                    "interpreted": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "cmd": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "params": {
+                          "type": [
+                            "object",
+                            "null"
+                          ],
+                          "additionalProperties": {}
+                        },
+                        "confidence": {
+                          "type": "string",
+                          "enum": [
+                            "high",
+                            "low"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "cmd",
+                        "params",
+                        "confidence"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "reply",
+                    "interpreted"
+                  ]
+                },
+                "examples": {
+                  "Sent": {
+                    "value": {
+                      "ok": true,
+                      "reply": "Turning the porch light on.",
+                      "interpreted": {
+                        "cmd": "ON",
+                        "params": null,
+                        "confidence": "high"
+                      }
+                    }
+                  },
+                  "Nothing matched": {
+                    "value": {
+                      "ok": false,
+                      "reply": "I couldn't find a command for that on this device.",
+                      "interpreted": {
+                        "cmd": null,
+                        "params": null,
+                        "confidence": "low"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body or parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not permitted - see `message` for the specific reason and how to fix it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The NLP provider is unreachable or not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ]
                 }
               }
             }
@@ -6285,6 +6495,116 @@
                     "recordedAt": "2024-11-19T10:05:00.000Z"
                   }
                 ]
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{deviceId}/sub-devices/{subDeviceId}/toggle": {
+      "patch": {
+        "tags": [
+          "Sub-Devices"
+        ],
+        "summary": "Enable or disable a sub-device",
+        "description": "Disabling a sub-device stops the master from accepting further commands for it (any `command`/`command/on`/`command/off` request targeting a disabled sub-device 404s), it does not remove it - state, telemetry history and its declared capabilities stay intact and it can be re-enabled at any time. Requires the same grant a command against this sub-device would need. Body is optional - omit it to flip the current state, or pass `enabled` explicitly.",
+        "security": [
+          {
+            "sessionAuth": []
+          },
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "example": "dev_a1b2c3"
+            },
+            "required": true,
+            "name": "deviceId",
+            "in": "path",
+            "example": "dev_a1b2c3"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "example": "sub_x1y2z3"
+            },
+            "required": true,
+            "name": "subDeviceId",
+            "in": "path",
+            "example": "sub_x1y2z3"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Explicit target state. Omit to flip the current state."
+                  }
+                }
+              },
+              "example": {
+                "enabled": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "enabled",
+                    "message"
+                  ]
+                },
+                "example": {
+                  "ok": true,
+                  "enabled": false,
+                  "message": "Sub-device disconnected"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not permitted - see `message` for the specific reason and how to fix it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           },

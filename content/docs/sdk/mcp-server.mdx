@@ -50,27 +50,124 @@ Using `npx -y @nexalware/mcp` (not a pinned version) means every launch runs the
 
 ## Tools
 
-Every tool takes and returns the same shape as its equivalent [TypeScript SDK method](/docs/sdk/sdk), a failed call comes back as a normal MCP tool error with the same message the API itself returns, not a crash.
+Every tool takes and returns the same shape as its equivalent [TypeScript SDK method](/docs/sdk/sdk), a failed call comes back as a normal MCP tool error with the same message the API itself returns, not a crash. The model reads each tool's parameter descriptions straight from its schema at call time, the breakdown below is the same information, written out for a human deciding what to wire up or debugging what the agent just did.
 
-| Tool | What it does | Required params |
-|---|---|---|
-| `list_devices` | List the devices this key can act on (only what its DeviceGrant(s) cover). The natural first call, an agent that doesn't already know a deviceId starts here. | none |
-| `get_device_commands` | List the commands a device accepts. | `deviceId` |
-| `send_command` | Send a command to a device. | `deviceId`, `cmd` |
-| `turn_device_on` | Shorthand for the ON command. | `deviceId` |
-| `turn_device_off` | Shorthand for the OFF command. | `deviceId` |
-| `get_device_telemetry` | Read a device's telemetry history. | `deviceId` |
-| `get_latest_telemetry` | Current state plus latest reading per metric. | `deviceId` |
-| `list_sub_devices` | List sub-devices behind a master. | `deviceId` |
-| `get_sub_device` | Read one sub-device's state and capabilities. | `deviceId`, `subDeviceId` |
-| `get_sub_device_telemetry` | Read one sub-device's telemetry history. | `deviceId`, `subDeviceId` |
-| `send_sub_device_command` | Send a command to one sub-device behind a master. | `deviceId`, `subDeviceId`, `cmd` |
-| `list_schedules` | List a device's active schedules. | `deviceId` |
-| `get_schedule_context` | List the commands available to schedule. | `deviceId` |
-| `create_schedule` | Create or replace a schedule slot (0-4). | `deviceId`, `slot`, `onTs`, `offTs` |
-| `update_schedule` | Update an existing schedule slot. | `deviceId`, `slot` |
-| `delete_schedule` | Cancel a schedule slot. | `deviceId`, `slot` |
-| `get_schedule_history` | List a device's completed/cancelled schedules. | `deviceId` |
+### `list_devices`
+
+The devices this key can actually act on, only what its own [DeviceGrant](/docs/concepts/authentication-and-access)(s) cover, never the rest of the account. The natural first call, an agent that doesn't already know a `deviceId` starts here instead of guessing one.
+
+- **`projectId`** (string, optional) — Narrow the list to one project. Leave it out to list every device this key can reach.
+
+### `get_device_commands`
+
+The command catalog a device accepts, so the agent knows what `cmd` values are actually valid before calling `send_command`.
+
+- **`deviceId`** (string, required) — From a prior `list_devices` call, shaped like `dev_a1b2c3`.
+
+### `send_command`
+
+The general-purpose way to make a device do something.
+
+- **`deviceId`** (string, required) — Which device to command.
+- **`cmd`** (string, required) — Must match a `name` from `get_device_commands`, case-sensitive.
+- **`params`** (object, optional) — Only if that command's catalog entry declares a `paramsSchema`, shape depends entirely on the specific command.
+
+### `turn_device_on` / `turn_device_off`
+
+Shorthand for the `ON`/`OFF` command.
+
+- **`deviceId`** (string, required) — Which device to turn on/off.
+
+### `get_device_telemetry`
+
+Historical telemetry readings, newest first.
+
+- **`deviceId`** (string, required) — Which device's history to read.
+- **`metric`** (string, optional) — Only this metric name, e.g. `power_draw`. Omit to get every metric.
+- **`limit`** (number, optional) — Max rows, 1-1000, defaults to 100.
+- **`since`** (number, optional) — Unix **milliseconds**, only readings at or after this time.
+
+### `get_latest_telemetry`
+
+Current state plus the most recent reading per metric, in one call.
+
+- **`deviceId`** (string, required) — Which device to snapshot.
+
+### `list_sub_devices`
+
+Physical devices connected locally behind this one, if it's acting as a [master](/docs/device-orchestration). Empty until the master's own firmware reports one.
+
+- **`deviceId`** (string, required) — The **master** device's id, not a sub-device id.
+
+### `get_sub_device`
+
+One sub-device's current state and capabilities.
+
+- **`deviceId`** (string, required) — The master device's id.
+- **`subDeviceId`** (string, required) — From a prior `list_sub_devices` call, shaped like `sub_x1y2z3`.
+
+### `get_sub_device_telemetry`
+
+Same idea as `get_device_telemetry`, scoped to one sub-device.
+
+- **`deviceId`** (string, required) — The master device's id.
+- **`subDeviceId`** (string, required) — Which sub-device's history to read.
+- **`metric` / `limit` / `since`** (optional) — Same meaning as in `get_device_telemetry`.
+
+### `send_sub_device_command`
+
+Send a command to one sub-device behind a master, instead of the master itself.
+
+- **`deviceId`** (string, required) — The master device's id.
+- **`subDeviceId`** (string, required) — Which sub-device to target.
+- **`cmd`** (string, required) — Whatever command name the sub-device itself declared it accepts (its own vocabulary, not a Nexalware-defined catalog).
+- **`params`** (object, optional) — Arguments for that command, if it needs any.
+
+### `list_schedules`
+
+A device's active (`PENDING` or `ACTIVE`) schedules.
+
+- **`deviceId`** (string, required) — Which device's schedules to list.
+
+### `get_schedule_context`
+
+The commands available to schedule for a device, same catalog as `get_device_commands`.
+
+- **`deviceId`** (string, required) — Which device to check.
+
+### `create_schedule`
+
+Create or replace one of a device's 5 schedule slots, firing `onCommand` at `onTs` and `offCommand` at `offTs`. Calling this again with the same `slot` overwrites what was there.
+
+- **`deviceId`** (string, required) — Which device to schedule.
+- **`slot`** (number, required) — Which of the 5 fixed slots to use, an integer **0 to 4**.
+- **`onTs`** (number, required) — Unix **seconds** to fire `onCommand`.
+- **`offTs`** (number, required) — Unix seconds to fire `offCommand`.
+- **`label`** (string, optional) — Shown on the dashboard, **max 7 characters**.
+- **`enabled`** (boolean, optional) — Omit to default enabled; `false` creates it disabled.
+- **`onCommand`** (object, optional) — `{ command, params? }`. Defaults to `{ command: "ON" }` if omitted.
+- **`offCommand`** (object, optional) — Same shape, defaults to `{ command: "OFF" }`.
+
+### `update_schedule`
+
+Update an existing schedule slot, only the fields provided are changed.
+
+- **`deviceId`** (string, required) — Which device's schedule to update.
+- **`slot`** (number, required) — Which slot (0-4), must already exist.
+- **`onTs` / `offTs` / `label` / `enabled` / `onCommand` / `offCommand`** (all optional) — Same meaning as in `create_schedule`, include only what's changing.
+
+### `delete_schedule`
+
+Cancel a schedule slot.
+
+- **`deviceId`** (string, required) — Which device's schedule to cancel.
+- **`slot`** (number, required) — Which slot (0-4) to cancel.
+
+### `get_schedule_history`
+
+A device's completed or cancelled schedules, most recent first.
+
+- **`deviceId`** (string, required) — Which device to check.
 
 ## What it can't do
 
@@ -80,5 +177,6 @@ One more boundary worth knowing: `create_schedule`/`update_schedule` fire existi
 
 ## Where to go from here
 
+- **[MCP Server (Python)](/docs/sdk/mcp-server-python)** - the same server, if your host or environment is Python-based instead.
 - **[SDK Reference (TypeScript)](/docs/sdk/sdk)** / **[SDK Reference (Python)](/docs/sdk/sdk-python)** - the same operations, called directly from your own code.
 - **[Device Orchestration](/docs/device-orchestration)** - what `list_sub_devices`/`send_sub_device_command` actually operate on, and how a device starts reporting sub-devices in the first place.

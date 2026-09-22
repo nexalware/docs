@@ -1,0 +1,184 @@
+---
+title: MCP Server (Python)
+description: Add Nexalware to any MCP-aware host, Claude Desktop, Claude Code, Cursor, or your own custom agent, as a Python package instead of an npm one.
+---
+
+`nexalware-mcp` runs your device control tools as an [MCP](https://modelcontextprotocol.io) server over stdio, the same server as [`@nexalware/mcp`](/docs/sdk/mcp-server), distributed as a Python package instead. Point any MCP-aware host at it, and its tools show up automatically, the host's own model decides when to call them. It's a thin wrapper around the [Python SDK](/docs/sdk/sdk-python)'s `make_tools()`, same operations, same permissions, just discoverable instead of hand-coded.
+
+<Callout type="info" title="Building your own agent instead of using a pre-built host?">
+  Use the SDK directly, in [Python](/docs/sdk/sdk-python) or [TypeScript](/docs/sdk/sdk). It's one function call away in code you already control, no subprocess or protocol discovery needed. MCP is for hosts whose internals you don't own, see [SDK & MCP](/docs/sdk) for the fuller comparison.
+</Callout>
+
+## Get an API key
+
+Create one on the dashboard (API Keys), scoped with a [DeviceGrant](/docs/concepts/authentication-and-access) to only the device(s) this agent should touch. This key ends up sitting in a local config file, least privilege matters more here than for a typical server-side integration.
+
+## Claude Code
+
+```bash
+claude mcp add nexalware -e NEXALWARE_API_KEY=nxw_live_sk_your_key_here -- uvx nexalware-mcp
+```
+
+## Claude Desktop, or any host using a `mcpServers` config file
+
+Add this block to the host's MCP config (Claude Desktop: Settings -> Developer -> Edit Config):
+
+```json
+{
+  "mcpServers": {
+    "nexalware": {
+      "command": "uvx",
+      "args": ["nexalware-mcp"],
+      "env": {
+        "NEXALWARE_API_KEY": "nxw_live_sk_your_key_here"
+      }
+    }
+  }
+}
+```
+
+Restart the host afterward, tools only load at startup. This uses [`uvx`](https://docs.astral.sh/uv/) to run the package with no separate install step, every launch runs the latest published release, the same role `npx -y` plays for the Node version.
+
+<Callout type="info" title="No uv installed?">
+  `curl -LsSf https://astral.sh/uv/install.sh | sh`, or fall back to `pip install nexalware-mcp` and point `command` at the installed `nexalware-mcp` script instead of `uvx`/`args`.
+</Callout>
+
+## Environment variables
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `NEXALWARE_API_KEY` | yes | The key from the step above. The server exits immediately with an error if this is missing. |
+| `NEXALWARE_API_URL` | no | Override for a self-hosted or staging deployment. Defaults to the production API. |
+
+## Tools
+
+Identical tool set to [`@nexalware/mcp`](/docs/sdk/mcp-server), same names, same params (snake_case, matching Python convention rather than TypeScript's camelCase). Every tool takes and returns the same shape as its equivalent [Python SDK method](/docs/sdk/sdk-python), a failed call comes back as a normal MCP tool error with the same message the API itself returns (a `NexalwareApiError`'s `error`/`message`), not a crash or a generic "something went wrong." The model reads each tool's parameter descriptions straight from its schema (generated from `make_tools`'s own type hints and docstrings) at call time, the breakdown below is the same information, written out for a human deciding what to wire up or debugging what the agent just did.
+
+### `list_devices`
+
+The devices this key can actually act on, only what its own [DeviceGrant](/docs/concepts/authentication-and-access)(s) cover, never the rest of the account. The natural first call, an agent that doesn't already know a `device_id` starts here instead of guessing one.
+
+- **`project_id`** (string, optional) — Narrow the list to one project. Leave it out to list every device this key can reach.
+
+### `get_device_commands`
+
+The command catalog a device accepts, so the agent knows what `cmd` values are actually valid before calling `send_command`.
+
+- **`device_id`** (string, required) — From a prior `list_devices` call, shaped like `dev_a1b2c3`.
+
+### `send_command`
+
+The general-purpose way to make a device do something.
+
+- **`device_id`** (string, required) — Which device to command.
+- **`cmd`** (string, required) — Must match a `name` from `get_device_commands`, case-sensitive.
+- **`params`** (object, optional) — Only if that command's catalog entry declares a `paramsSchema`, shape depends entirely on the specific command.
+
+### `turn_device_on` / `turn_device_off`
+
+Shorthand for the `ON`/`OFF` command.
+
+- **`device_id`** (string, required) — Which device to turn on/off.
+
+### `get_device_telemetry`
+
+Historical telemetry readings, newest first.
+
+- **`device_id`** (string, required) — Which device's history to read.
+- **`metric`** (string, optional) — Only this metric name, e.g. `power_draw`. Omit to get every metric.
+- **`limit`** (number, optional) — Max rows, 1-1000, defaults to 100.
+- **`since`** (number, optional) — Unix **milliseconds**, only readings at or after this time.
+
+### `get_latest_telemetry`
+
+Current state plus the most recent reading per metric, in one call.
+
+- **`device_id`** (string, required) — Which device to snapshot.
+
+### `list_sub_devices`
+
+Physical devices connected locally behind this one, if it's acting as a [master](/docs/device-orchestration). Empty until the master's own firmware reports one.
+
+- **`device_id`** (string, required) — The **master** device's id, not a sub-device id.
+
+### `get_sub_device`
+
+One sub-device's current state and capabilities.
+
+- **`device_id`** (string, required) — The master device's id.
+- **`sub_device_id`** (string, required) — From a prior `list_sub_devices` call, shaped like `sub_x1y2z3`.
+
+### `get_sub_device_telemetry`
+
+Same idea as `get_device_telemetry`, scoped to one sub-device.
+
+- **`device_id`** (string, required) — The master device's id.
+- **`sub_device_id`** (string, required) — Which sub-device's history to read.
+- **`metric` / `limit` / `since`** (optional) — Same meaning as in `get_device_telemetry`.
+
+### `send_sub_device_command`
+
+Send a command to one sub-device behind a master, instead of the master itself.
+
+- **`device_id`** (string, required) — The master device's id.
+- **`sub_device_id`** (string, required) — Which sub-device to target.
+- **`cmd`** (string, required) — Whatever command name the sub-device itself declared it accepts (its own vocabulary, not a Nexalware-defined catalog).
+- **`params`** (object, optional) — Arguments for that command, if it needs any.
+
+### `list_schedules`
+
+A device's active (`PENDING` or `ACTIVE`) schedules.
+
+- **`device_id`** (string, required) — Which device's schedules to list.
+
+### `get_schedule_context`
+
+The commands available to schedule for a device, same catalog as `get_device_commands`.
+
+- **`device_id`** (string, required) — Which device to check.
+
+### `create_schedule`
+
+Create or replace one of a device's 5 schedule slots, firing `on_command` at `on_ts` and `off_command` at `off_ts`. Calling this again with the same `slot` overwrites what was there.
+
+- **`device_id`** (string, required) — Which device to schedule.
+- **`slot`** (number, required) — Which of the 5 fixed slots to use, an integer **0 to 4**.
+- **`on_ts`** (number, required) — Unix **seconds** to fire `on_command`.
+- **`off_ts`** (number, required) — Unix seconds to fire `off_command`.
+- **`label`** (string, optional) — Shown on the dashboard, **max 7 characters**.
+- **`enabled`** (boolean, optional) — Omit to default enabled; `false` creates it disabled.
+- **`on_command`** (object, optional) — `{ command, params? }`. Defaults to `{ "command": "ON" }` if omitted.
+- **`off_command`** (object, optional) — Same shape, defaults to `{ "command": "OFF" }`.
+
+### `update_schedule`
+
+Update an existing schedule slot, only the fields provided are changed.
+
+- **`device_id`** (string, required) — Which device's schedule to update.
+- **`slot`** (number, required) — Which slot (0-4), must already exist.
+- **`on_ts` / `off_ts` / `label` / `enabled` / `on_command` / `off_command`** (all optional) — Same meaning as in `create_schedule`, include only what's changing.
+
+### `delete_schedule`
+
+Cancel a schedule slot.
+
+- **`device_id`** (string, required) — Which device's schedule to cancel.
+- **`slot`** (number, required) — Which slot (0-4) to cancel.
+
+### `get_schedule_history`
+
+A device's completed or cancelled schedules, most recent first.
+
+- **`device_id`** (string, required) — Which device to check.
+
+## What it can't do
+
+Nothing outside the calling key's own [DeviceGrant](/docs/concepts/authentication-and-access). There's no tool to create a grant, register a device, or manage API keys, those stay dashboard-only, an MCP tool call is only ever as capable as the key you gave it, never able to expand its own access.
+
+One more boundary worth knowing: `create_schedule`/`update_schedule` fire existing commands from a device's catalog, they can't invent new ones. Defining, editing, or deleting a command definition itself (what commands a device type even has) stays a dashboard-only action, that's configuring what a device *is*, not something to do with it.
+
+## Where to go from here
+
+- **[MCP Server (Node)](/docs/sdk/mcp-server)** - the same server, if your host or environment is Node-based instead.
+- **[SDK Reference (Python)](/docs/sdk/sdk-python)** / **[SDK Reference (TypeScript)](/docs/sdk/sdk)** - the same operations, called directly from your own code.
+- **[Device Orchestration](/docs/device-orchestration)** - what `list_sub_devices`/`send_sub_device_command` actually operate on, and how a device starts reporting sub-devices in the first place.

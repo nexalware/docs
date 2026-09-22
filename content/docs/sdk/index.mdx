@@ -8,13 +8,13 @@ Both of these sit on top of the same [REST API](/docs/reference) an API key can 
 ## The short version
 
 - **Building your own agent, or writing plain code that calls Nexalware directly?** Use the SDK, in [TypeScript](/docs/sdk/sdk) or [Python](/docs/sdk/sdk-python). One import, typed methods, no extra moving parts.
-- **Using a pre-built AI tool that you don't control the code of** (Claude Desktop, Claude Code, Cursor, or anything else that speaks [MCP](https://modelcontextprotocol.io))? Use the [MCP server](/docs/sdk/mcp-server). Add it to that tool's config, and its tools show up automatically, no code to write.
+- **Using a pre-built AI tool that you don't control the code of** (Claude Desktop, Claude Code, Cursor, or anything else that speaks [MCP](https://modelcontextprotocol.io))? Use the MCP server, in [Node](/docs/sdk/mcp-server) or [Python](/docs/sdk/mcp-server-python). Add it to that tool's config, and its tools show up automatically, no code to write.
 
 ## Why both exist
 
 An AI agent you build yourself already has its own function-calling or tool-registration code, you control that loop. Making it go through MCP for that case adds a subprocess and a discovery round-trip for something one direct function call already does. The SDK is that direct call: plain HTTPS underneath, so it's the more universal, lower-latency option whenever you're the one writing the agent.
 
-The [MCP server](/docs/sdk/mcp-server) exists for the opposite case: a host you didn't write the internals of. It can't have a function hand-registered inside it, it needs a standard protocol to discover what's available at runtime. Under the hood, the MCP server is a thin wrapper around the exact same SDK, so both paths call the same code and support the same operations, nothing is more or less capable, they're just two entry points for two different situations.
+The MCP server exists for the opposite case: a host you didn't write the internals of. It can't have a function hand-registered inside it, it needs a standard protocol to discover what's available at runtime. Under the hood, each MCP server (Node or Python) is a thin wrapper around its own language's SDK, so every path calls the same operations, nothing is more or less capable, they're just different entry points for different situations - pick the MCP server in whichever language you'd rather run as a subprocess, it doesn't need to match the language of the host driving it.
 
 ## Both only reach what the API key is granted
 
@@ -29,3 +29,4 @@ Neither the SDK nor the MCP server introduces a new permission system. Every cal
 - **[SDK Reference (TypeScript)](/docs/sdk/sdk)** - install, a full method reference, and a working example.
 - **[SDK Reference (Python)](/docs/sdk/sdk-python)** - the same, in Python.
 - **[MCP Server](/docs/sdk/mcp-server)** - install, the config snippet for Claude Desktop/Code, and the full tool list.
+- **[MCP Server (Python)](/docs/sdk/mcp-server-python)** - the same server, distributed as a Python package instead of an npm one.

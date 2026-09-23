@@ -1,0 +1,181 @@
+---
+title: Proteus Troubleshooting
+description: Virtual COM ports, COMPIM settings, start-up order, and commands that never reach a sub-device - the parts that usually go wrong the first time.
+---
+
+This page picks up where the [Proteus Walkthrough](/docs/simulate/proteus-walkthrough) ends. Work through it top to bottom on a new machine, or jump to the [troubleshooting table](#troubleshooting-table) if you already have an error.
+
+<Callout type="info" title="Fixed in @nexalware/simulate 0.3.0+">
+  Two things below used to require workarounds and no longer do: commands sent from the dashboard, the REST API, or `@nexalware/mcp` now route to the right sub-device automatically (previously they were silently dropped - see [Master Reference](/docs/device-orchestration/master-reference#4-relay-commands-down-to-the-right-sub-device) for the `externalId`/`target` distinction this fixed), and `MasterDevice` now publishes status immediately after a sub-device reports new state, instead of waiting up to 20s for the next heartbeat. If you're on an older version, `npm install @nexalware/simulate@latest` / `pip install -U nexalware-simulate` first.
+</Callout>
+
+## How the pieces connect
+
+Windows lets only one program open a COM port at a time. Proteus's COMPIM holds its port, so your master script can't open that same port. Instead, you create a **virtual null-modem pair**: two linked COM ports where anything written to one comes out of the other. Proteus opens one end, and your master opens the other.
+
+```
+Arduino (in Proteus) ──UART── COMPIM ── COM1 ⇄ COM12 ── SerialTransport ── MasterDevice ── MQTT ── Nexalware
+                                          └─ com0com pair ─┘
+```
+
+You need one pair **per sub-device**. The examples on this page use:
+
+| Sub-device | Sketch | Proteus COMPIM port | Master's port (`SerialTransport` path) |
+|---|---|---|---|
+| Light | `light.ino` (id `light-1`) | `COM1` | `COM12` |
+| Fan | `fan.ino` (id `fan-1`) | `COM2` | `COM14` |
+
+Any free port names work. How to choose them is covered below.
+
+## 1. Install com0com (signed build)
+
+Use **com0com 2.2.2.0, the signed x64 build**: `com0com-2.2.2.0-x64-fre-signed.zip` from [SourceForge](https://sourceforge.net/projects/com0com/files/com0com/2.2.2.0/).
+
+<Callout type="warn" title="Don't use com0com 3.0.0.0 on Windows 10/11">
+  Its driver isn't signed, so Windows won't load it. `setupc list` still shows your pairs, but the ports never appear in Windows, and your master fails with `Error: Opening COM12: File not found`.
+</Callout>
+
+To check which version you have, open `C:\Program Files (x86)\com0com\com0com.inf` and look at the `DriverVer` line. It should end in `2.2.2.0`. If it says `3.0.0.0`:
+
+1. In the com0com **Setup Command Prompt**, remove the existing pairs (`remove 0`, `remove 1`, …).
+2. Uninstall com0com and restart Windows.
+3. Install the signed 2.2.2.0 build. Untick the default `CNCA0 <-> CNCB0` pair during setup.
+
+If SetupG.exe (the GUI configuration tool) shows a pair but Windows Device Manager doesn't list the port, check its **"use Ports class"** checkbox for both sides of that pair, then click Apply - without it, the port exists in com0com's own config but never registers under Windows's standard "Ports (COM & LPT)" class, which is what `SerialTransport`/Device Manager both look for.
+
+## 2. Pick free port names
+
+List the ports Windows already has:
+
+```powershell
+[System.IO.Ports.SerialPort]::GetPortNames()
+Get-CimInstance Win32_PnPEntity | Where-Object Name -match '\(COM\d+\)' | Select-Object Name, Status
+```
+
+Two things to watch for:
+
+- **Some ports belong to real hardware.** On many laptops `COM3` is *Intel Active Management Technology – SOL*, a built-in device, not something com0com or Proteus created - closing Proteus won't free it. A USB-serial adapter you once plugged in can also keep its number (for example `COM4`) even when it's unplugged. If `com0com` or Proteus reports a port as busy and closing Proteus doesn't fix it, check Device Manager for a real device already using that name (its error message often names the underlying device, e.g. `/Device/Serial0`, which is Windows's own name for onboard hardware) - pick a different, unused number instead of fighting for that one. Numbers above `COM10` are almost always free.
+- **Older Proteus versions only list `COM1`–`COM4` in the COMPIM port dropdown.** Give the **Proteus end** of each pair a low number (`COM1`, `COM2`), and the **master end** any free number (`COM12`, `COM14`).
+
+## 3. Create the pairs
+
+Open **Start → com0com → Setup Command Prompt** with right-click → **Run as administrator**, then run:
+
+```
+install PortName=COM12 PortName=COM1
+install PortName=COM14 PortName=COM2
+list
+```
+
+`list` should show:
+
+```
+CNCA0 PortName=COM12
+CNCB0 PortName=COM1
+CNCA1 PortName=COM14
+CNCB1 PortName=COM2
+```
+
+Lines like `ComDB: COM1 - logged as "in use"` right after `install` are normal: com0com is reserving the names.
+
+If you prefer PowerShell (as Administrator), call `setupc.exe` directly. The `.\` is required:
+
+```powershell
+cd "C:\Program Files (x86)\com0com"
+.\setupc.exe install PortName=COM12 PortName=COM1
+.\setupc.exe install PortName=COM14 PortName=COM2
+```
+
+**If `install` says `The port name COM12 is already logged as "in use"`,** a pair using that name already exists. Run `list` to see it. Either use it as it is, or rename one end with `change`, for example:
+
+```
+change CNCB0 PortName=COM1
+```
+
+**If it instead says the port is in use by another device** (not a com0com pair), fully close Proteus first (COMPIM holds its port for as long as Proteus is open, not just while the simulation is running) and retry. If it's still busy after Proteus is closed, that name belongs to real hardware - see [step 2](#2-pick-free-port-names) and pick a different one.
+
+Confirm Windows can see all four ports:
+
+```powershell
+[System.IO.Ports.SerialPort]::GetPortNames()   # should include COM1, COM2, COM12, COM14
+```
+
+Close and reopen Proteus after creating or renaming ports. It only reads the port list at startup.
+
+## 4. Configure each circuit in Proteus
+
+For each Arduino + COMPIM circuit:
+
+**COMPIM properties**
+
+| Setting | Value |
+|---|---|
+| Physical Port | The Proteus end of the pair (`COM1` for the light, `COM2` for the fan) |
+| Physical Baud Rate | `9600` |
+| Virtual Baud Rate | `9600` |
+| Data Bits / Parity / Stop Bits | `8` / `NONE` / `1` |
+
+**Arduino properties**
+
+| Setting | Value |
+|---|---|
+| Program File | That circuit's **own** compiled sketch, e.g. `fan.ino.hex` for the fan (not the `with_bootloader` file). Use *Sketch → Export Compiled Binary* in the Arduino IDE. |
+| Clock Frequency | `16MHz` |
+
+<Callout type="warn" title="Each Arduino must load its own .hex">
+  If both circuits load `light.ino.hex`, both report `"id":"light-1"`. The fan never appears, and commands for the light may go to either circuit.
+</Callout>
+
+The sketches use `JsonDocument`, so they need **ArduinoJson v7** (*Library Manager → ArduinoJson*). With v6 the sketch won't compile, and Proteus will silently keep running whatever old `.hex` it had.
+
+**Checking the wiring.** Add a **Virtual Terminal** (*Instruments*) with its RXD on the Arduino's TX (D1), set to 9600 baud, and press Play. You should see the sketch's `identify`, `describe` and `state` lines. If the terminal shows them but the master receives nothing, the COMPIM's TXD/RXD connections are the wrong way round - swap them. If the terminal is blank, the Arduino isn't running the sketch: check the Program File, the clock and ArduinoJson.
+
+## 5. Startup order
+
+The [Proteus Walkthrough](/docs/simulate/proteus-walkthrough)'s reference sketch already re-announces `identify`/`describe`/`state` on a timer, not just once in `setup()` - a master only learns a sub-device exists from `identify`, so without re-announcing, starting the master after Proteus (or restarting either one mid-session) leaves that sub-device invisible until the simulation restarts. If you're working from an older copy of the sketch that only sends `identify` once, either add the timer (shown in the walkthrough) or always start the master first, then press Play in Proteus.
+
+## 6. Debug logging
+
+When something isn't reaching its destination, log both directions of every serial port. You can then tell exactly which hop is failing:
+
+```js
+master.on("subDeviceSend", (channelId, message) => console.log(`-> ${channelId}: ${message}`));
+const receiveForLog = master.receiveSubDeviceMessage.bind(master);
+master.receiveSubDeviceMessage = (channelId, raw) => {
+  if (channelId.startsWith("COM")) console.log(`<- ${channelId}: ${raw.trim()}`);
+  receiveForLog(channelId, raw);
+};
+```
+
+A healthy command looks like this:
+
+```
+-> COM12: {"type":"command","cmd":"ON"}
+<- COM12: {"type":"result","cmd":"ON","ok":true}
+<- COM12: {"type":"state","relay":"ON"}
+```
+
+To check whether Proteus actually has a port open, try opening it yourself. If Proteus holds it, you'll get "Access denied":
+
+```powershell
+foreach ($p in 'COM1','COM2') {
+  $s = New-Object System.IO.Ports.SerialPort $p,9600
+  try { $s.Open(); "$p : free - Proteus is NOT using it"; $s.Close() } catch { "$p : busy (Proteus has it)" }
+}
+```
+
+## Troubleshooting table
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Error: Opening COM12: File not found` | The port doesn't exist: no com0com pair, or the com0com driver isn't loaded | [Steps 1–3](#1-install-com0com-signed-build). Check with `GetPortNames()` |
+| `setupc list` shows pairs, but Windows has no such ports | Unsigned com0com 3.0.0.0 driver blocked by Windows, or "use Ports class" unchecked | Install the signed 2.2.2.0 build, or check "use Ports class" ([step 1](#1-install-com0com-signed-build)) |
+| `The port name COMx is already logged as "in use"` | A pair (or real hardware) already uses that name | `list`, then reuse it, `change` it, or pick a free number ([steps 2](#2-pick-free-port-names)–[3](#3-create-the-pairs)) |
+| Port shows busy even after fully closing Proteus | A real device (not Proteus) already owns that name | Pick a different, unused port number instead ([step 2](#2-pick-free-port-names)) |
+| The port you need isn't in the COMPIM dropdown | Older Proteus only lists COM1–COM4 | Rename the Proteus end of the pair to COM1/COM2 ([step 2](#2-pick-free-port-names)), then restart Proteus |
+| Master runs, but the sub-device never appears | The Arduino isn't transmitting: wrong/no `.hex`, wrong clock, ArduinoJson v6, or TXD/RXD swapped | Virtual Terminal check ([step 4](#4-configure-each-circuit-in-proteus)) |
+| Sub-device appears only if Proteus is started after the master | `identify` isn't being re-announced on a timer | [Step 5](#5-startup-order) |
+| Second circuit reports the first circuit's id | Both Arduinos load the same `.hex` | Point each Arduino at its own sketch ([step 4](#4-configure-each-circuit-in-proteus)) |
+| `-> COMx` is logged but the Arduino never replies | Data isn't reaching the Arduino's RX | Check the COMPIM → Arduino RX wire |
+
+See [`@nexalware/mcp`'s README](https://www.npmjs.com/package/@nexalware/mcp) for Windows-specific MCP connection issues (PowerShell quoting, `npx` timeouts, stale server processes).

@@ -194,14 +194,23 @@ handling commands sent to the master. Add one check at the top: if the
 command has a `target` field, it's meant for a sub-device, not the master
 itself.
 
+<Callout type="warn" title="Route on externalId, not target">
+  `target` is Nexalware's own id for the sub-device (`sub_...`), not the id
+  your sub-device sent in `identify` - it will never match a key in
+  `subDevices` above. The command payload also carries `externalId`, the
+  sub-device's own id, exactly for this: route on that instead.
+</Callout>
+
 ```cpp title="onMessage (extended)"
 void onMessage(char* topic, byte* payload, unsigned int length) {
   JsonDocument doc;
   if (deserializeJson(doc, payload, length)) return;
 
   if (doc["target"].is<const char*>()) {
-    String target = doc["target"].as<String>();
-    auto it = subDevices.find(target);
+    // externalId is the id this sub-device sent in identify - target is
+    // Nexalware's own id and won't match anything in subDevices.
+    String externalId = doc["externalId"].is<const char*>() ? doc["externalId"].as<String>() : doc["target"].as<String>();
+    auto it = subDevices.find(externalId);
     if (it == subDevices.end()) return; // this sub-device isn't known right now
 
     JsonDocument cmdMsg;

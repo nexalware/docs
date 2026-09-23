@@ -150,6 +150,13 @@ handling commands sent to the master. Add one check at the top: if the
 command has a `target` field, it's meant for a sub-device, not the master
 itself.
 
+<Callout type="warn" title="Route on externalId, not target">
+  `target` is Nexalware's own id for the sub-device (`sub_...`), not the id
+  your sub-device sent in `identify` - it will never match a key in
+  `sub_devices` above. The command payload also carries `externalId`, the
+  sub-device's own id, exactly for this: route on that instead.
+</Callout>
+
 ```python title="on_command (extended)"
 def on_command(topic, msg):
     payload = ujson.loads(msg)
@@ -159,7 +166,10 @@ def on_command(topic, msg):
         # existing logic for commands aimed at the master itself
         return
 
-    sub_device = sub_devices.get(target)
+    # externalId is the id this sub-device sent in identify - target is
+    # Nexalware's own id and won't match anything in sub_devices.
+    external_id = payload.get("externalId") or target
+    sub_device = sub_devices.get(external_id)
     if not sub_device or "ws" not in sub_device:
         return  # this sub-device isn't connected right now, nothing to relay to
 

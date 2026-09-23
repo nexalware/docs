@@ -13,6 +13,10 @@ A complete, worked example: a "Garage Light" relay sub-device, circuit and firmw
   This walkthrough assumes both run on the same Windows PC (`SerialTransport` is same-machine only). If Proteus is on one machine and your master script needs to run elsewhere, see [Remote & Multi-Machine Simulation](/docs/simulate/remote) for `WebSocketTransport` and the `nexalware-serial-bridge` CLI.
 </Callout>
 
+<Callout type="info" title="Hit a COM port, com0com, or command-routing error?">
+  See [Proteus Troubleshooting](/docs/simulate/proteus-troubleshooting) - virtual port setup, picking free port names, per-circuit COMPIM/Arduino config, and a debug-logging technique for tracing exactly where a message stops.
+</Callout>
+
 ## 1. Register a master device
 
 On the dashboard, register a device the normal way and generate credentials, this is your **master**, exactly like any other device (see [Register Your First Device](/docs/guides/register-your-first-device)). You don't need to register the sub-device itself anywhere, it only exists behind the master, see [Device Orchestration](/docs/device-orchestration) for why.
@@ -97,7 +101,22 @@ void setup() {
   sendState();
 }
 
+// A master only learns a sub-device exists from its identify message - if
+// the master starts (or restarts) after this sketch already ran setup(),
+// it missed that one-time announcement and this sub-device stays invisible
+// until the simulation itself restarts. Re-announcing on a timer means
+// startup order between the two never matters.
+const unsigned long ANNOUNCE_INTERVAL_MS = 10000;
+unsigned long lastAnnounce = 0;
+
 void loop() {
+  if (millis() - lastAnnounce >= ANNOUNCE_INTERVAL_MS) {
+    lastAnnounce = millis();
+    sendIdentify();
+    sendDescribe();
+    sendState();
+  }
+
   if (Serial.available()) {
     String line = Serial.readStringUntil('\n');
     JsonDocument doc;

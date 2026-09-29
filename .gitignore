@@ -24,6 +24,8 @@ yarn-error.log*
 .env*.local
 .vercel
 next-env.d.ts
+CLAUDE.md
+AGENTS.md
 
 # OpenAPI spec — regenerated fresh from backend/services/api-gateway on
 # every local build (see package.json's predev/prebuild), but also

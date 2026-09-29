@@ -15,6 +15,7 @@ import type { Metadata } from 'next';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
 import { getPageImageUrl, getPageMarkdownUrl, gitConfig } from '@/lib/shared';
 import type { OperationObject, PathItemObject } from 'fumadocs-openapi';
+import Link from "next/link";
 
 export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
   const params = await props.params;
@@ -55,10 +56,10 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
             <Callout type="warn" title="Dashboard-only">
               This mirrors what a human does from the Nexalware web app - it&apos;s not meant to
               be automated by a third-party integration, even though a session token from{' '}
-              <a href="/docs/reference/authentication">Log in</a> can technically call it. If
+              <Link href="/docs/reference/authentication">Log in</Link> can technically call it. If
               you&apos;re building an integration that controls devices, use an API key instead:
               have an Owner/Admin grant it access to a device (a <code>DeviceGrant</code>), and
-              use the <a href="/docs/reference/device-control">Device Control</a> endpoints.
+              use the <Link href="/docs/reference/device-control">Device Control</Link> endpoints.
             </Callout>
           )}
           <OpenAPIPage {...openApiProps} />
